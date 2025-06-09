@@ -1,5 +1,4 @@
-# Используем Node.js 18 Alpine для минимального размера
-FROM node:18-alpine AS base
+FROM node:18.19.0-alpine AS base
 
 # Устанавливаем зависимости только при необходимости
 FROM base AS deps

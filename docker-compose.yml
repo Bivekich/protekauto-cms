@@ -4,7 +4,7 @@ services:
   protekauto-cms:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile  # Используем упрощенный вариант для обхода rate limits
     ports:
       - "3000:3000"
     environment:
