@@ -1,0 +1,619 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  firstName String
+  lastName  String
+  email     String   @unique
+  password  String
+  avatar    String?
+  role      UserRole @default(ADMIN)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Связь с логами аудита
+  auditLogs AuditLog[]
+  productHistory ProductHistory[]
+  managedClients Client[] // Клиенты, которыми управляет менеджер
+  balanceChanges ClientBalanceHistory[] // История изменений баланса
+
+  @@map("users")
+}
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    AuditAction
+  details   String?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime    @default(now())
+
+  @@map("audit_logs")
+}
+
+// Модели каталога товаров
+model Category {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  seoTitle    String?
+  seoDescription String?
+  image       String?
+  isHidden    Boolean   @default(false)
+  includeSubcategoryProducts Boolean @default(false)
+  parentId    String?
+  parent      Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Category[] @relation("CategoryHierarchy")
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("categories")
+}
+
+model Product {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  article     String?   @unique
+  description String?
+  videoUrl    String?
+  wholesalePrice Float?
+  retailPrice Float?
+  weight      Float?
+  dimensions  String?   // ДхШхВ в формате "10x20x30"
+  unit        String    @default("шт")
+  isVisible   Boolean   @default(true)
+  applyDiscounts Boolean @default(true)
+  stock       Int       @default(0)
+  
+  // Связи
+  categories  Category[]
+  images      ProductImage[]
+  options     ProductOption[]
+  characteristics ProductCharacteristic[]
+  relatedProducts Product[] @relation("RelatedProducts")
+  relatedTo   Product[] @relation("RelatedProducts")
+  accessoryProducts Product[] @relation("AccessoryProducts")
+  accessoryTo Product[] @relation("AccessoryProducts")
+  history     ProductHistory[]
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("products")
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  url       String
+  alt       String?
+  order     Int     @default(0)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@map("product_images")
+}
+
+model Option {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  type        OptionType @default(SINGLE)
+  values      OptionValue[]
+  products    ProductOption[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("options")
+}
+
+model OptionValue {
+  id        String    @id @default(cuid())
+  value     String
+  price     Float     @default(0)
+  optionId  String
+  option    Option    @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  products  ProductOption[]
+  createdAt DateTime  @default(now())
+
+  @@map("option_values")
+}
+
+model ProductOption {
+  id            String      @id @default(cuid())
+  productId     String
+  product       Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  optionId      String
+  option        Option      @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  optionValueId String
+  optionValue   OptionValue @relation(fields: [optionValueId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, optionId, optionValueId])
+  @@map("product_options")
+}
+
+model Characteristic {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  products  ProductCharacteristic[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("characteristics")
+}
+
+model ProductCharacteristic {
+  id               String         @id @default(cuid())
+  value            String
+  productId        String
+  product          Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  characteristicId String
+  characteristic   Characteristic @relation(fields: [characteristicId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, characteristicId])
+  @@map("product_characteristics")
+}
+
+model ProductHistory {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  action    String   // CREATE, UPDATE, DELETE
+  changes   Json?    // JSON с изменениями
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@map("product_history")
+}
+
+enum UserRole {
+  ADMIN
+  MODERATOR
+  USER
+}
+
+enum AuditAction {
+  USER_LOGIN
+  USER_LOGOUT
+  USER_CREATE
+  USER_UPDATE
+  USER_DELETE
+  PASSWORD_CHANGE
+  AVATAR_UPLOAD
+  PROFILE_UPDATE
+  CATEGORY_CREATE
+  CATEGORY_UPDATE
+  CATEGORY_DELETE
+  PRODUCT_CREATE
+  PRODUCT_UPDATE
+  PRODUCT_DELETE
+}
+
+enum OptionType {
+  SINGLE
+  MULTIPLE
+}
+
+// Модели для клиентов
+model Client {
+  id                String        @id @default(cuid())
+  clientNumber      String        @unique
+  type              ClientType    @default(INDIVIDUAL)
+  name              String
+  email             String?
+  phone             String
+  city              String?
+  markup            Float?        @default(0)
+  isConfirmed       Boolean       @default(false)
+  profileId         String?
+  profile           ClientProfile? @relation(fields: [profileId], references: [id])
+  managerId         String?       // Личный менеджер
+  manager           User?         @relation(fields: [managerId], references: [id])
+  balance           Float         @default(0)
+  comment           String?
+  
+  // Уведомления
+  emailNotifications Boolean      @default(true)
+  smsNotifications   Boolean      @default(true)
+  pushNotifications  Boolean      @default(false)
+  
+  // Поля для юридических лиц
+  legalEntityType   String?       // ООО, ИП, АО и т.д.
+  legalEntityName   String?       // Наименование юрлица
+  inn               String?
+  kpp               String?
+  ogrn              String?
+  okpo              String?
+  legalAddress      String?
+  actualAddress     String?
+  bankAccount       String?
+  bankName          String?
+  bankBik           String?
+  correspondentAccount String?
+  
+  // Связи
+  vehicles          ClientVehicle[]
+  discounts         ClientDiscount[]
+  deliveryAddresses ClientDeliveryAddress[]
+  contacts          ClientContact[]
+  contracts         ClientContract[]
+  legalEntities     ClientLegalEntity[]
+  bankDetails       ClientBankDetails[]
+  balanceHistory    ClientBalanceHistory[]
+  
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@map("clients")
+}
+
+model ClientProfile {
+  id                    String   @id @default(cuid())
+  code                  String   @unique
+  name                  String   @unique
+  description           String?
+  baseMarkup            Float    @default(0)
+  autoSendInvoice       Boolean  @default(true)
+  vinRequestModule      Boolean  @default(false)
+  clients               Client[]
+  
+  // Связи с дополнительными настройками
+  priceRangeMarkups     ProfilePriceRangeMarkup[]
+  orderDiscounts        ProfileOrderDiscount[]
+  supplierMarkups       ProfileSupplierMarkup[]
+  brandMarkups          ProfileBrandMarkup[]
+  categoryMarkups       ProfileCategoryMarkup[]
+  excludedBrands        ProfileExcludedBrand[]
+  excludedCategories    ProfileExcludedCategory[]
+  paymentTypes          ProfilePaymentType[]
+  discountProfiles      DiscountProfile[]
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("client_profiles")
+}
+
+// Наценки от стоимости товара
+model ProfilePriceRangeMarkup {
+  id          String        @id @default(cuid())
+  profileId   String
+  profile     ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  priceFrom   Float
+  priceTo     Float
+  markupType  MarkupType    @default(PERCENTAGE)
+  markupValue Float
+  createdAt   DateTime      @default(now())
+
+  @@map("profile_price_range_markups")
+}
+
+// Скидки от суммы заказа
+model ProfileOrderDiscount {
+  id            String        @id @default(cuid())
+  profileId     String
+  profile       ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  minOrderSum   Float
+  discountType  DiscountType  @default(PERCENTAGE)
+  discountValue Float
+  createdAt     DateTime      @default(now())
+
+  @@map("profile_order_discounts")
+}
+
+// Наценки на поставщиков
+model ProfileSupplierMarkup {
+  id          String        @id @default(cuid())
+  profileId   String
+  profile     ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  supplierName String
+  markupType  MarkupType    @default(PERCENTAGE)
+  markupValue Float
+  createdAt   DateTime      @default(now())
+
+  @@map("profile_supplier_markups")
+}
+
+// Наценки на бренды
+model ProfileBrandMarkup {
+  id          String        @id @default(cuid())
+  profileId   String
+  profile     ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  brandName   String
+  markupType  MarkupType    @default(PERCENTAGE)
+  markupValue Float
+  createdAt   DateTime      @default(now())
+
+  @@map("profile_brand_markups")
+}
+
+// Наценки на категории товаров
+model ProfileCategoryMarkup {
+  id           String        @id @default(cuid())
+  profileId    String
+  profile      ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  categoryName String
+  markupType   MarkupType    @default(PERCENTAGE)
+  markupValue  Float
+  createdAt    DateTime      @default(now())
+
+  @@map("profile_category_markups")
+}
+
+// Исключенные бренды
+model ProfileExcludedBrand {
+  id        String        @id @default(cuid())
+  profileId String
+  profile   ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  brandName String
+  createdAt DateTime      @default(now())
+
+  @@map("profile_excluded_brands")
+}
+
+// Исключенные категории
+model ProfileExcludedCategory {
+  id           String        @id @default(cuid())
+  profileId    String
+  profile      ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  categoryName String
+  createdAt    DateTime      @default(now())
+
+  @@map("profile_excluded_categories")
+}
+
+// Типы платежей для профиля
+model ProfilePaymentType {
+  id          String        @id @default(cuid())
+  profileId   String
+  profile     ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  paymentType PaymentType
+  isEnabled   Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+
+  @@map("profile_payment_types")
+}
+
+enum MarkupType {
+  PERCENTAGE    // Процентная наценка
+  FIXED_AMOUNT  // Фиксированная сумма
+}
+
+enum PaymentType {
+  CASH          // Наличные
+  CARD          // Банковская карта
+  BANK_TRANSFER // Банковский перевод
+  ONLINE        // Онлайн платежи
+  CREDIT        // В кредит
+}
+
+model ClientVehicle {
+  id          String  @id @default(cuid())
+  clientId    String
+  client      Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name        String  // Название авто
+  vin         String?
+  frame       String?
+  licensePlate String?
+  brand       String?
+  model       String?
+  modification String?
+  year        Int?
+  mileage     Int?
+  comment     String?
+  createdAt   DateTime @default(now())
+
+  @@map("client_vehicles")
+}
+
+// Адреса доставки
+model ClientDeliveryAddress {
+  id           String      @id @default(cuid())
+  clientId     String
+  client       Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name         String      // Название адреса
+  address      String      // Полный адрес
+  deliveryType DeliveryType @default(COURIER)
+  comment      String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@map("client_delivery_addresses")
+}
+
+// Контакты
+model ClientContact {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  phone     String?
+  email     String?
+  comment   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("client_contacts")
+}
+
+// Договоры
+model ClientContract {
+  id                String   @id @default(cuid())
+  clientId          String
+  client            Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  contractNumber    String
+  contractDate      DateTime
+  name              String
+  ourLegalEntity    String   // Наше ЮЛ
+  clientLegalEntity String   // ЮЛ клиента
+  balance           Float    @default(0)
+  currency          String   @default("RUB")
+  isActive          Boolean  @default(true)
+  isDefault         Boolean  @default(false)
+  contractType      String   // Тип договора
+  relationship      String   // Отношение
+  paymentDelay      Boolean  @default(false)
+  creditLimit       Float?
+  delayDays         Int?
+  fileUrl           String?  // Ссылка на файл договора
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("client_contracts")
+}
+
+// Юридические лица клиента
+model ClientLegalEntity {
+  id                    String   @id @default(cuid())
+  clientId              String
+  client                Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  shortName             String   // Короткое наименование
+  fullName              String   // Полное наименование
+  form                  String   // Форма (ООО, ИП и т.д.)
+  legalAddress          String   // Юридический адрес
+  actualAddress         String?  // Фактический адрес
+  taxSystem             String   // Система налогообложения
+  responsiblePhone      String?  // Телефон ответственного
+  responsiblePosition   String?  // Должность ответственного
+  responsibleName       String?  // ФИО ответственного
+  accountant            String?  // Бухгалтер
+  signatory             String?  // Подписант
+  registrationReasonCode String? // Код причины постановки на учет
+  ogrn                  String?  // ОГРН
+  inn                   String   // ИНН
+  vatPercent            Float    @default(20) // НДС в процентах
+  bankDetails           ClientBankDetails[] // Банковские реквизиты
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("client_legal_entities")
+}
+
+// Банковские реквизиты
+model ClientBankDetails {
+  id                String            @id @default(cuid())
+  clientId          String
+  client            Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  legalEntityId     String?
+  legalEntity       ClientLegalEntity? @relation(fields: [legalEntityId], references: [id])
+  name              String            // Название реквизитов
+  accountNumber     String            // Расчетный счет
+  bankName          String            // Наименование банка
+  bik               String            // БИК
+  correspondentAccount String         // Корреспондентский счет
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@map("client_bank_details")
+}
+
+// История изменения баланса
+model ClientBalanceHistory {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  oldValue  Float
+  newValue  Float
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@map("client_balance_history")
+}
+
+model ClientDiscount {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name        String
+  type        DiscountType
+  value       Float    // процент или фиксированная сумма
+  isActive    Boolean  @default(true)
+  validFrom   DateTime?
+  validTo     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("client_discounts")
+}
+
+model ClientStatus {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  color       String   @default("#6B7280")
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("client_statuses")
+}
+
+enum ClientType {
+  INDIVIDUAL    // Физическое лицо
+  LEGAL_ENTITY  // Юридическое лицо
+}
+
+enum DiscountType {
+  PERCENTAGE    // Процентная скидка
+  FIXED_AMOUNT  // Фиксированная сумма
+}
+
+// Модели для скидок и промокодов
+model Discount {
+  id              String            @id @default(cuid())
+  name            String
+  type            DiscountCodeType  @default(DISCOUNT)
+  code            String?           @unique // Промокод (если есть)
+  minOrderAmount  Float?            @default(0)
+  discountType    DiscountType      @default(PERCENTAGE)
+  discountValue   Float
+  isActive        Boolean           @default(true)
+  validFrom       DateTime?
+  validTo         DateTime?
+  
+  // Связи с профилями
+  profiles        DiscountProfile[]
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@map("discounts")
+}
+
+// Связь скидок с профилями клиентов
+model DiscountProfile {
+  id         String        @id @default(cuid())
+  discountId String
+  discount   Discount      @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  profileId  String
+  profile    ClientProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  createdAt  DateTime      @default(now())
+
+  @@unique([discountId, profileId])
+  @@map("discount_profiles")
+}
+
+enum DiscountCodeType {
+  DISCOUNT   // Обычная скидка
+  PROMOCODE  // Промокод
+}
+
+enum DeliveryType {
+  COURIER    // Курьер
+  PICKUP     // Самовывоз
+  POST       // Почта России
+  TRANSPORT  // Транспортная компания
+}

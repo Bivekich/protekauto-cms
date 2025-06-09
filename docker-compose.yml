@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  protekauto-cms:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      # База данных (внешняя)
+      - DATABASE_URL=${DATABASE_URL}
+      
+      # NextAuth и JWT
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - JWT_SECRET=${JWT_SECRET}
+      
+      # AWS S3 для файлов
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_BUCKET_NAME=${AWS_BUCKET_NAME}
+      
+      # URL для доступа к админке
+      - NEXTAUTH_URL=${NEXTAUTH_URL}
+      
+      # Окружение
+      - NODE_ENV=production
+      
+    restart: unless-stopped
+    
+    # Healthcheck для проверки состояния
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
