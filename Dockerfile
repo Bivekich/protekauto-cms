@@ -12,7 +12,11 @@ RUN npm install
 # Собираем приложение
 FROM base AS builder
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+
+# Устанавливаем все зависимости (включая devDependencies)
+COPY package.json package-lock.json* ./
+RUN npm install
+
 COPY . .
 
 # Копируем переменные окружения для сборки (будут заменены в runtime)
@@ -32,9 +36,8 @@ ENV NEXT_TELEMETRY_DISABLED 1
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-COPY --from=builder /app/public ./public
-
 # Копируем сгенерированные файлы с правильными разрешениями
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/src/generated ./src/generated
