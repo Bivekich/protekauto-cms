@@ -1,36 +1,152 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ProtekAuto CMS
 
-## Getting Started
+Админ панель для управления контентом веб-приложения, построенная на Next.js, GraphQL и Prisma.
 
-First, run the development server:
+## Возможности
+
+- ✅ Автоматическая инициализация системы
+- ✅ Создание первого администратора
+- ✅ GraphQL API
+- ✅ Современный UI с Shadcn/ui
+- ✅ Работа с базой данных через Prisma ORM
+- 🔄 Интеграция с S3 для файлов (в разработке)
+
+## Технологии
+
+- **Frontend**: Next.js 15, React 19, TypeScript
+- **UI**: Tailwind CSS, Shadcn/ui, Radix UI
+- **Backend**: GraphQL (Apollo Server)
+- **Database**: PostgreSQL + Prisma ORM
+- **Forms**: React Hook Form + Zod validation
+- **Storage**: AWS S3 (планируется)
+
+## Установка и настройка
+
+### 1. Клонирование и установка зависимостей
+
+```bash
+git clone <repository-url>
+cd protekauto-cms
+npm install
+```
+
+### 2. Настройка базы данных
+
+Обновите файл `.env` с данными вашей облачной базы данных:
+
+```env
+# Database
+DATABASE_URL="postgresql://username:password@host:port/database?schema=public"
+
+# AWS S3 (для будущего использования)
+AWS_ACCESS_KEY_ID=""
+AWS_SECRET_ACCESS_KEY=""
+AWS_REGION=""
+AWS_S3_BUCKET=""
+
+# NextAuth (для будущего использования)
+NEXTAUTH_SECRET="your-secret-key-here"
+NEXTAUTH_URL="http://localhost:3000"
+```
+
+### 3. Применение миграций базы данных
+
+```bash
+# Создание и применение миграции
+npx prisma db push
+
+# Генерация Prisma клиента
+npx prisma generate
+```
+
+### 4. Запуск проекта
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Откройте [http://localhost:3000](http://localhost:3000) в браузере.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Первый запуск
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+При первом запуске система автоматически:
 
-## Learn More
+1. Проверит наличие пользователей в базе данных
+2. Если пользователей нет, перенаправит на страницу `/setup`
+3. На странице настройки можно создать первого администратора
+4. После создания пользователя произойдет перенаправление на главную страницу
 
-To learn more about Next.js, take a look at the following resources:
+## Структура проекта
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+src/
+├── app/                    # Next.js App Router
+│   ├── api/graphql/       # GraphQL API endpoint
+│   ├── setup/             # Страница инициализации
+│   └── layout.tsx         # Главный layout
+├── components/
+│   ├── providers/         # React провайдеры
+│   ├── setup/            # Компоненты настройки
+│   └── ui/               # Shadcn UI компоненты
+├── lib/
+│   ├── graphql/          # GraphQL схемы и resolvers
+│   ├── apollo-client.ts  # Apollo Client конфигурация
+│   ├── prisma.ts         # Prisma клиент
+│   └── utils.ts          # Утилиты
+└── generated/
+    └── prisma/           # Сгенерированный Prisma клиент
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## GraphQL API
 
-## Deploy on Vercel
+API доступно по адресу `/api/graphql` и поддерживает:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Queries
+- `hasUsers` - проверка наличия пользователей
+- `users` - получение списка пользователей
+- `user(id)` - получение пользователя по ID
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Mutations
+- `createUser(input)` - создание нового пользователя
+
+## Разработка
+
+### Добавление новых UI компонентов
+
+```bash
+npx shadcn@latest add [component-name]
+```
+
+### Работа с базой данных
+
+```bash
+# Просмотр данных в Prisma Studio
+npx prisma studio
+
+# Сброс базы данных
+npx prisma db push --force-reset
+
+# Создание миграции
+npx prisma migrate dev --name [migration-name]
+```
+
+### GraphQL
+
+Для тестирования GraphQL запросов откройте `/api/graphql` в браузере.
+
+## Тестирование
+
+### Тест S3 хранилища
+Откройте [http://localhost:3000/test-s3](http://localhost:3000/test-s3) для тестирования загрузки файлов в S3.
+
+### Тест GraphQL API
+Откройте [http://localhost:3000/api/graphql](http://localhost:3000/api/graphql) для проверки GraphQL API.
+
+## Следующие шаги
+
+- [ ] Добавить аутентификацию и авторизацию
+- [x] Интегрировать S3 для загрузки файлов
+- [ ] Добавить управление контентом
+- [ ] Создать систему ролей и разрешений
+- [ ] Добавить логирование и мониторинг
+# protekauto-cms
