@@ -7,7 +7,7 @@ WORKDIR /app
 
 # Устанавливаем зависимости
 COPY package.json package-lock.json* ./
-RUN npm ci --only=production
+RUN npm install
 
 # Собираем приложение
 FROM base AS builder

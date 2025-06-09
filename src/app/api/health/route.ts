@@ -8,7 +8,7 @@ export async function GET() {
       timestamp: new Date().toISOString(),
       service: 'protekauto-cms'
     })
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { 
         status: 'error', 
