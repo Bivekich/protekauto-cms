@@ -3705,8 +3705,6 @@ export const resolvers = {
         const smsResult = await smsService.sendVerificationCode(phone, code)
         
         if (smsResult.success) {
-          console.log(`SMS код успешно отправлен на ${phone}, messageId: ${smsResult.messageId}`)
-          
           return {
             success: true,
             sessionId: finalSessionId,
@@ -3714,21 +3712,18 @@ export const resolvers = {
             message: 'SMS код отправлен'
           }
         } else {
-          console.error(`Ошибка отправки SMS на ${phone}:`, smsResult.error)
-          
-          // Если SMS не отправилось, показываем код в консоли для разработки
-          if (process.env.NODE_ENV === 'development') {
-            console.log(`DEVELOPMENT: SMS код для ${phone}: ${code}`)
-            
-            return {
-              success: true,
-              sessionId: finalSessionId,
-              message: 'SMS отправлен (dev mode)',
-              code // Только в dev режиме!
-            }
+          // Если SMS не отправилось в production - бросаем ошибку
+          if (process.env.NODE_ENV !== 'development') {
+            throw new Error(`Не удалось отправить SMS: ${smsResult.error}`)
           }
           
-          throw new Error(`Не удалось отправить SMS: ${smsResult.error}`)
+          // В development режиме возвращаем успех и показываем код
+          return {
+            success: true,
+            sessionId: finalSessionId,
+            message: 'SMS отправлен (dev mode)',
+            code // Только в dev режиме!
+          }
         }
       } catch (error) {
         console.error('Ошибка отправки SMS:', error)

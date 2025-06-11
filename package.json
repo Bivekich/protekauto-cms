@@ -11,7 +11,11 @@
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
-    "prisma:generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "check:sms": "node scripts/check-sms-config.mjs",
+    "prebuild": "npm run check:sms",
+    "deploy": "bash scripts/deploy.sh",
+    "update:env": "bash scripts/update-env.sh"
   },
   "dependencies": {
     "@apollo/client": "^3.13.8",

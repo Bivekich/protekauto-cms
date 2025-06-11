@@ -24,6 +24,11 @@ services:
       # URL для доступа к админке
       - NEXTAUTH_URL=${NEXTAUTH_URL}
       
+      # SMS API Билайн
+      - BEELINE_SMS_USER=${BEELINE_SMS_USER}
+      - BEELINE_SMS_PASS=${BEELINE_SMS_PASS}
+      - BEELINE_SMS_SENDER=${BEELINE_SMS_SENDER}
+      
       # Окружение
       - NODE_ENV=production
       

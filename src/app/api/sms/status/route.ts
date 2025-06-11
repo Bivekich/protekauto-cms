@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { smsService } from '../../../../lib/sms-service'
 import { smsCodeStore } from '../../../../lib/sms-code-store'
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     // Проверяем конфигурацию SMS сервиса
     const hasConfig = !!(process.env.BEELINE_SMS_USER && process.env.BEELINE_SMS_PASS)

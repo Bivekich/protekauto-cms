@@ -101,13 +101,28 @@ class BeeSMSService {
     // Нормализуем номер телефона
     const normalizedPhone = this.normalizePhone(phone)
     
-    return this.sendSMS({
+    console.log(`SMS код сохранен для ${normalizedPhone}, sessionId: ${Date.now()}`)
+    
+    const result = await this.sendSMS({
       message,
       target: normalizedPhone,
       period: 300, // 5 минут время жизни
       autotrimtext: true,
       post_id: `auth_${Date.now()}_${Math.random().toString(36).substring(7)}`
     })
+
+    // Логируем результат отправки
+    if (result.success) {
+      console.log(`SMS код успешно отправлен на ${normalizedPhone}, messageId: ${result.messageId}`)
+    } else {
+      console.error(`Ошибка отправки SMS на ${normalizedPhone}:`, result.error)
+      // В режиме разработки показываем код в консоли
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`DEVELOPMENT: SMS код для ${normalizedPhone}: ${code}`)
+      }
+    }
+
+    return result
   }
 
   /**
@@ -141,32 +156,44 @@ class BeeSMSService {
    */
   private parseResponse(responseText: string): SMSResponse {
     try {
-      // Билайн возвращает XML, но для простоты будем парсить как текст
-      // В идеале стоит использовать XML парсер
+      // Beeline возвращает XML в формате:
+      // Успешный ответ содержит <result> с элементами <sms>
+      // Ошибка содержит <error> или другие теги с описанием ошибки
       
-      if (responseText.includes('<status>successfully</status>')) {
-        // Успешная отправка
-        const messageIdMatch = responseText.match(/<message_id>(\d+)<\/message_id>/)
-        const balanceMatch = responseText.match(/<balance>([\d.]+)<\/balance>/)
+      if (responseText.includes('<result') && responseText.includes('<sms')) {
+        // Успешная отправка - есть результат с SMS элементами
+        const smsIdMatch = responseText.match(/id="(\d+)"/)
         
         return {
           success: true,
-          messageId: messageIdMatch ? messageIdMatch[1] : undefined,
-          balance: balanceMatch ? parseFloat(balanceMatch[1]) : undefined,
+          messageId: smsIdMatch ? smsIdMatch[1] : undefined,
           raw: responseText
         }
-      } else {
+      } else if (responseText.includes('<error>') || responseText.includes('<ERROR>')) {
         // Ошибка отправки
-        const errorMatch = responseText.match(/<error>(.*?)<\/error>/) || 
-                          responseText.match(/<comment>(.*?)<\/comment>/)
+        const errorMatch = responseText.match(/<error[^>]*>(.*?)<\/error>/i) || 
+                          responseText.match(/<ERROR[^>]*>(.*?)<\/ERROR>/i)
         
         return {
           success: false,
-          error: errorMatch ? errorMatch[1] : 'Неизвестная ошибка от SMS API',
+          error: errorMatch ? errorMatch[1] : 'Ошибка отправки SMS',
+          raw: responseText
+        }
+      } else if (responseText.includes('<?xml') && !responseText.includes('<error') && !responseText.includes('<ERROR>')) {
+        // XML ответ без явных ошибок, но нет результата - считаем успешным
+        return {
+          success: true,
+          raw: responseText
+        }
+      } else {
+        // Неизвестный формат ответа
+        return {
+          success: false,
+          error: 'Неожиданный формат ответа от SMS API',
           raw: responseText
         }
       }
-    } catch (error) {
+    } catch {
       return {
         success: false,
         error: 'Ошибка парсинга ответа SMS API',
@@ -196,12 +223,27 @@ class BeeSMSService {
       })
 
       const responseText = await response.text()
-      const parsed = this.parseResponse(responseText)
       
-      if (parsed.success) {
-        return { balance: parsed.balance }
+      // Для баланса Beeline может возвращать другой формат
+      // Попробуем найти баланс в разных возможных форматах
+      const balanceMatch = responseText.match(/<balance[^>]*>([\d.,]+)<\/balance>/i) ||
+                          responseText.match(/balance[^>]*="([\d.,]+)"/i) ||
+                          responseText.match(/>(\d+(?:\.\d{2})?)</) // Простой числовой баланс
+
+      if (balanceMatch) {
+        return { 
+          balance: parseFloat(balanceMatch[1].replace(',', '.'))
+        }
+      } else if (responseText.includes('<error>') || responseText.includes('<ERROR>')) {
+        const errorMatch = responseText.match(/<error[^>]*>(.*?)<\/error>/i) ||
+                          responseText.match(/<ERROR[^>]*>(.*?)<\/ERROR>/i)
+        return { 
+          error: errorMatch ? errorMatch[1] : 'Ошибка получения баланса' 
+        }
       } else {
-        return { error: parsed.error }
+        return { 
+          error: 'Не удалось получить баланс' 
+        }
       }
     } catch (error) {
       return { 
@@ -215,7 +257,7 @@ class BeeSMSService {
 const smsService = new BeeSMSService({
   user: process.env.BEELINE_SMS_USER || '',
   pass: process.env.BEELINE_SMS_PASS || '',
-  sender: process.env.BEELINE_SMS_SENDER || 'ProtekAuto',
+  sender: process.env.BEELINE_SMS_SENDER || 'Protekauto',
 })
 
 export { BeeSMSService, smsService }

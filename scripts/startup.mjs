@@ -41,6 +41,12 @@ async function startup() {
       'S3_ENDPOINT'
     ]
 
+    const optionalEnvVars = [
+      'BEELINE_SMS_USER',
+      'BEELINE_SMS_PASS',
+      'BEELINE_SMS_SENDER'
+    ]
+
     const missingVars = requiredEnvVars.filter(varName => !process.env[varName])
     
     if (missingVars.length > 0) {
@@ -49,7 +55,16 @@ async function startup() {
       process.exit(1)
     }
 
-    console.log('✅ Все переменные окружения установлены')
+    console.log('✅ Все обязательные переменные окружения установлены')
+
+    // Проверяем опциональные переменные SMS
+    const missingSmsVars = optionalEnvVars.filter(varName => !process.env[varName])
+    if (missingSmsVars.length > 0) {
+      console.warn('⚠️  Отсутствуют переменные для SMS API (SMS функции будут недоступны):')
+      missingSmsVars.forEach(varName => console.warn(`   - ${varName}`))
+    } else {
+      console.log('✅ SMS API настроен')
+    }
 
     console.log('🔄 Выполнение миграций базы данных...')
     await runCommand('npx', ['prisma', 'migrate', 'deploy'])
