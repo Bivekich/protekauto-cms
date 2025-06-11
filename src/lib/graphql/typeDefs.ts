@@ -630,16 +630,16 @@ export const typeDefs = gql`
 
   input ClientContractInput {
     contractNumber: String!
-    contractDate: DateTime!
+    contractDate: DateTime
     name: String!
-    ourLegalEntity: String!
-    clientLegalEntity: String!
+    ourLegalEntity: String
+    clientLegalEntity: String
     balance: Float
     currency: String
     isActive: Boolean
     isDefault: Boolean
-    contractType: String!
-    relationship: String!
+    contractType: String
+    relationship: String
     paymentDelay: Boolean
     creditLimit: Float
     delayDays: Int
@@ -648,11 +648,11 @@ export const typeDefs = gql`
 
   input ClientLegalEntityInput {
     shortName: String!
-    fullName: String!
-    form: String!
-    legalAddress: String!
+    fullName: String
+    form: String
+    legalAddress: String
     actualAddress: String
-    taxSystem: String!
+    taxSystem: String
     responsiblePhone: String
     responsiblePosition: String
     responsibleName: String

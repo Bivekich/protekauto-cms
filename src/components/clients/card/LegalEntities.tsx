@@ -158,9 +158,9 @@ export const LegalEntities = ({ client, onUpdate }: LegalEntitiesProps) => {
           id: editingData.id,
           input: {
             shortName: editingData.shortName,
-            fullName: editingData.fullName || undefined,
-            form: editingData.form || undefined,
-            legalAddress: editingData.legalAddress || undefined,
+            fullName: editingData.fullName || editingData.shortName,
+            form: editingData.form || 'ООО',
+            legalAddress: editingData.legalAddress,
             actualAddress: editingData.actualAddress || undefined,
             taxSystem: editingData.taxSystem || undefined,
             responsiblePhone: editingData.responsiblePhone || undefined,

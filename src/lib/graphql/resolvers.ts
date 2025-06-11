@@ -214,16 +214,16 @@ interface ClientContactInput {
 
 interface ClientContractInput {
   contractNumber: string
-  contractDate: Date
+  contractDate?: Date
   name: string
-  ourLegalEntity: string
-  clientLegalEntity: string
+  ourLegalEntity?: string
+  clientLegalEntity?: string
   balance?: number
   currency?: string
   isActive?: boolean
   isDefault?: boolean
-  contractType: string
-  relationship: string
+  contractType?: string
+  relationship?: string
   paymentDelay?: boolean
   creditLimit?: number
   delayDays?: number
@@ -232,11 +232,11 @@ interface ClientContractInput {
 
 interface ClientLegalEntityInput {
   shortName: string
-  fullName: string
-  form: string
-  legalAddress: string
+  fullName?: string
+  form?: string
+  legalAddress?: string
   actualAddress?: string
-  taxSystem: string
+  taxSystem?: string
   responsiblePhone?: string
   responsiblePosition?: string
   responsibleName?: string
@@ -3341,16 +3341,16 @@ export const resolvers = {
           data: {
             clientId,
             contractNumber: input.contractNumber,
-            contractDate: input.contractDate,
+            contractDate: input.contractDate || new Date(),
             name: input.name,
-            ourLegalEntity: input.ourLegalEntity,
-            clientLegalEntity: input.clientLegalEntity,
+            ourLegalEntity: input.ourLegalEntity || '',
+            clientLegalEntity: input.clientLegalEntity || '',
             balance: input.balance || 0,
             currency: input.currency || 'RUB',
             isActive: input.isActive ?? true,
             isDefault: input.isDefault ?? false,
-            contractType: input.contractType,
-            relationship: input.relationship,
+            contractType: input.contractType || 'STANDARD',
+            relationship: input.relationship || 'DIRECT',
             paymentDelay: input.paymentDelay ?? false,
             creditLimit: input.creditLimit,
             delayDays: input.delayDays,
@@ -3443,11 +3443,11 @@ export const resolvers = {
           data: {
             clientId,
             shortName: input.shortName,
-            fullName: input.fullName,
-            form: input.form,
-            legalAddress: input.legalAddress,
+            fullName: input.fullName || input.shortName,
+            form: input.form || 'ООО',
+            legalAddress: input.legalAddress || '',
             actualAddress: input.actualAddress,
-            taxSystem: input.taxSystem,
+            taxSystem: input.taxSystem || 'УСН',
             responsiblePhone: input.responsiblePhone,
             responsiblePosition: input.responsiblePosition,
             responsibleName: input.responsibleName,
@@ -3984,11 +3984,11 @@ export const resolvers = {
           data: {
             clientId: actualContext.clientId,
             shortName: input.shortName,
-            fullName: input.fullName,
-            form: input.form,
-            legalAddress: input.legalAddress,
+            fullName: input.fullName || input.shortName,
+            form: input.form || 'ООО',
+            legalAddress: input.legalAddress || '',
             actualAddress: input.actualAddress,
-            taxSystem: input.taxSystem,
+            taxSystem: input.taxSystem || 'УСН',
             responsiblePhone: input.responsiblePhone,
             responsiblePosition: input.responsiblePosition,
             responsibleName: input.responsibleName,

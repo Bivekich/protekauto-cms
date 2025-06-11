@@ -96,17 +96,16 @@ export const BankDetails = ({ client, onUpdate }: BankDetailsProps) => {
   })
 
   const handleSave = async () => {
-    if (!formData.name || !formData.accountNumber || !formData.bankName || !formData.bik) {
-      toast.error('Заполните обязательные поля (название, номер счета, банк, БИК)')
+    if (!formData.name || !formData.accountNumber || !formData.bankName || !formData.bik || !formData.legalEntityId) {
+      toast.error('Заполните обязательные поля (название, номер счета, банк, БИК и юридическое лицо)')
       return
     }
 
     try {
       await createBankDetails({
         variables: {
-          clientId: client.id,
+          legalEntityId: formData.legalEntityId,
           input: {
-            legalEntityId: formData.legalEntityId || undefined,
             name: formData.name,
             accountNumber: formData.accountNumber,
             bankName: formData.bankName,
@@ -253,14 +252,14 @@ export const BankDetails = ({ client, onUpdate }: BankDetailsProps) => {
                   <TableCell>
                     {editingId === details.id ? (
                       <Select
-                        value={editingData?.legalEntityId || ''}
-                        onValueChange={(value) => setEditingData(prev => prev ? { ...prev, legalEntityId: value || undefined } : null)}
+                        value={editingData?.legalEntityId || 'none'}
+                        onValueChange={(value) => setEditingData(prev => prev ? { ...prev, legalEntityId: value === 'none' ? undefined : value } : null)}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Выберите юр. лицо" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">Не выбрано</SelectItem>
+                          <SelectItem value="none">Не выбрано</SelectItem>
                           {client.legalEntities.map((entity) => (
                             <SelectItem key={entity.id} value={entity.id}>
                               {entity.shortName} (ИНН: {entity.inn})
@@ -335,14 +334,14 @@ export const BankDetails = ({ client, onUpdate }: BankDetailsProps) => {
                   </TableCell>
                   <TableCell>
                     <Select
-                      value={formData.legalEntityId}
-                      onValueChange={(value) => setFormData(prev => ({ ...prev, legalEntityId: value }))}
+                      value={formData.legalEntityId || 'none'}
+                      onValueChange={(value) => setFormData(prev => ({ ...prev, legalEntityId: value === 'none' ? '' : value }))}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Выберите юр. лицо" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">Не выбрано</SelectItem>
+                        <SelectItem value="none">Не выбрано</SelectItem>
                         {client.legalEntities.map((entity) => (
                           <SelectItem key={entity.id} value={entity.id}>
                             {entity.shortName} (ИНН: {entity.inn})
