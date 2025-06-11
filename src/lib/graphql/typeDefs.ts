@@ -806,6 +806,23 @@ export const typeDefs = gql`
     
     # Данные авторизованного клиента
     clientMe: Client
+    
+    # Laximo интеграция
+    laximoBrands: [LaximoBrand!]!
+    laximoCatalogInfo(catalogCode: String!): LaximoCatalogInfo
+    laximoWizard2(catalogCode: String!, ssd: String): [LaximoWizardStep!]!
+    laximoFindVehicle(catalogCode: String!, vin: String!): [LaximoVehicleSearchResult!]!
+    laximoFindVehicleByWizard(catalogCode: String!, ssd: String!): [LaximoVehicleSearchResult!]!
+    laximoFindVehicleByPlate(catalogCode: String!, plateNumber: String!): [LaximoVehicleSearchResult!]!
+    laximoFindPartReferences(partNumber: String!): [String!]!
+    laximoFindApplicableVehicles(catalogCode: String!, partNumber: String!): [LaximoVehicleSearchResult!]!
+    laximoVehicleInfo(catalogCode: String!, vehicleId: String!, ssd: String, localized: Boolean!): LaximoVehicleInfo
+    laximoQuickGroups(catalogCode: String!, vehicleId: String, ssd: String): [LaximoQuickGroup!]!
+    laximoCategories(catalogCode: String!, vehicleId: String, ssd: String): [LaximoQuickGroup!]!
+    laximoUnits(catalogCode: String!, vehicleId: String, ssd: String): [LaximoQuickGroup!]!
+    laximoQuickDetail(catalogCode: String!, vehicleId: String!, quickGroupId: String!, ssd: String!): LaximoQuickDetail
+    laximoOEMSearch(catalogCode: String!, vehicleId: String!, oemNumber: String!, ssd: String!): LaximoOEMResult
+    laximoFulltextSearch(catalogCode: String!, vehicleId: String!, searchQuery: String!, ssd: String!): LaximoFulltextSearchResult
   }
 
   type AuthPayload {
@@ -997,5 +1014,187 @@ export const typeDefs = gql`
     validFrom: DateTime
     validTo: DateTime
     profileIds: [String!]
+  }
+
+  # Laximo интеграция
+  type LaximoBrand {
+    brand: String!
+    code: String!
+    icon: String!
+    name: String!
+    supportdetailapplicability: Boolean!
+    supportparameteridentification2: Boolean!
+    supportquickgroups: Boolean!
+    supportvinsearch: Boolean!
+    supportframesearch: Boolean
+    vinexample: String
+    frameexample: String
+    features: [LaximoFeature!]!
+    extensions: LaximoExtensions
+  }
+
+  type LaximoFeature {
+    name: String!
+    example: String
+  }
+
+  type LaximoExtensions {
+    operations: [LaximoOperation!]
+  }
+
+  type LaximoOperation {
+    description: String!
+    kind: String!
+    name: String!
+    fields: [LaximoField!]!
+  }
+
+  type LaximoField {
+    description: String!
+    example: String
+    name: String!
+    pattern: String
+  }
+
+  # Новые типы для поиска автомобилей
+  type LaximoCatalogInfo {
+    brand: String!
+    code: String!
+    icon: String!
+    name: String!
+    supportdetailapplicability: Boolean!
+    supportparameteridentification2: Boolean!
+    supportquickgroups: Boolean!
+    supportvinsearch: Boolean!
+    vinexample: String
+    features: [LaximoFeature!]!
+    permissions: [String!]!
+  }
+
+  type LaximoWizardStep {
+    allowlistvehicles: Boolean!
+    automatic: Boolean!
+    conditionid: String!
+    determined: Boolean!
+    name: String!
+    type: String!
+    ssd: String
+    value: String
+    valueid: String
+    options: [LaximoWizardOption!]!
+  }
+
+  type LaximoWizardOption {
+    key: String!
+    value: String!
+  }
+
+  type LaximoVehicleSearchResult {
+    vehicleid: String!
+    name: String
+    brand: String!
+    catalog: String
+    model: String!
+    modification: String!
+    year: String!
+    bodytype: String!
+    engine: String!
+    notes: String
+    ssd: String
+  }
+
+  type LaximoVehicleInfo {
+    vehicleid: String!
+    name: String!
+    ssd: String!
+    brand: String!
+    catalog: String!
+    attributes: [LaximoVehicleAttribute!]!
+  }
+
+  type LaximoVehicleAttribute {
+    key: String!
+    name: String!
+    value: String!
+  }
+
+  type LaximoQuickGroup {
+    quickgroupid: String!
+    name: String!
+    link: Boolean!
+    children: [LaximoQuickGroup!]
+  }
+
+  type LaximoQuickDetail {
+    quickgroupid: String!
+    name: String!
+    units: [LaximoUnit!]
+  }
+
+  type LaximoUnit {
+    unitid: String!
+    name: String!
+    code: String
+    description: String
+    details: [LaximoDetail!]
+  }
+
+  type LaximoDetail {
+    detailid: String!
+    name: String!
+    oem: String!
+    brand: String
+    description: String
+    applicablemodels: String
+    note: String
+    attributes: [LaximoDetailAttribute!]
+  }
+
+  type LaximoDetailAttribute {
+    key: String!
+    name: String
+    value: String!
+  }
+
+  type LaximoOEMResult {
+    oemNumber: String!
+    categories: [LaximoOEMCategory!]!
+  }
+
+  type LaximoOEMCategory {
+    categoryid: String!
+    name: String!
+    units: [LaximoOEMUnit!]!
+  }
+
+  type LaximoOEMUnit {
+    unitid: String!
+    name: String!
+    code: String
+    imageurl: String
+    details: [LaximoOEMDetail!]!
+  }
+
+  type LaximoOEMDetail {
+    detailid: String!
+    name: String!
+    oem: String!
+    brand: String
+    amount: String
+    range: String
+    attributes: [LaximoDetailAttribute!]
+  }
+
+  # Новые типы для поиска деталей по названию
+  type LaximoFulltextSearchResult {
+    searchQuery: String!
+    details: [LaximoFulltextDetail!]!
+  }
+
+  type LaximoFulltextDetail {
+    oem: String!
+    name: String!
+    brand: String
+    description: String
   }
 ` 

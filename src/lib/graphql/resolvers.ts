@@ -4,6 +4,7 @@ import { createAuditLog, AuditAction, getClientInfo } from '../audit'
 import { uploadBuffer, generateFileKey } from '../s3'
 import { smsService } from '../sms-service'
 import { smsCodeStore } from '../sms-code-store'
+import { laximoService } from '../laximo-service'
 import * as csvWriter from 'csv-writer'
 
 interface CreateUserInput {
@@ -1036,6 +1037,172 @@ export const resolvers = {
       } catch (error) {
         console.error('Ошибка получения скидки:', error)
         throw new Error('Не удалось получить скидку')
+      }
+    },
+
+    // Laximo интеграция
+    laximoBrands: async () => {
+      return await laximoService.getListCatalogs()
+    },
+
+    laximoCatalogInfo: async (_: unknown, { catalogCode }: { catalogCode: string }) => {
+      try {
+        console.log('🔍 Запрос информации о каталоге:', catalogCode)
+        const result = await laximoService.getCatalogInfo(catalogCode)
+        console.log('📋 Результат getCatalogInfo:', result ? 'найден' : 'не найден')
+        return result
+      } catch (error) {
+        console.error('❌ Ошибка получения информации о каталоге:', error)
+        return null
+      }
+    },
+
+    laximoWizard2: async (_: unknown, { catalogCode, ssd }: { catalogCode: string; ssd?: string }) => {
+      try {
+        return await laximoService.getWizard2(catalogCode, ssd || '')
+      } catch (error) {
+        console.error('Ошибка получения параметров wizard:', error)
+        return []
+      }
+    },
+
+    laximoFindVehicle: async (_: unknown, { catalogCode, vin }: { catalogCode: string; vin: string }) => {
+      try {
+        // Если catalogCode пустой, делаем глобальный поиск
+        if (!catalogCode || catalogCode.trim() === '') {
+          console.log('🌍 Глобальный поиск автомобиля по VIN/Frame:', vin)
+          return await laximoService.findVehicleGlobal(vin)
+        }
+        
+        return await laximoService.findVehicle(catalogCode, vin)
+      } catch (error) {
+        console.error('Ошибка поиска автомобиля по VIN:', error)
+        return []
+      }
+    },
+
+    laximoFindVehicleByWizard: async (_: unknown, { catalogCode, ssd }: { catalogCode: string; ssd: string }) => {
+      try {
+        return await laximoService.findVehicleByWizard(catalogCode, ssd)
+      } catch (error) {
+        console.error('Ошибка поиска автомобиля по wizard:', error)
+        return []
+      }
+    },
+
+    laximoFindVehicleByPlate: async (_: unknown, { catalogCode, plateNumber }: { catalogCode: string; plateNumber: string }) => {
+      try {
+        return await laximoService.findVehicleByPlateNumber(catalogCode, plateNumber)
+      } catch (error) {
+        console.error('Ошибка поиска автомобиля по госномеру:', error)
+        return []
+      }
+    },
+
+    laximoFindPartReferences: async (_: unknown, { partNumber }: { partNumber: string }) => {
+      try {
+        return await laximoService.findPartReferences(partNumber)
+      } catch (error) {
+        console.error('Ошибка поиска каталогов по артикулу:', error)
+        return []
+      }
+    },
+
+    laximoFindApplicableVehicles: async (_: unknown, { catalogCode, partNumber }: { catalogCode: string; partNumber: string }) => {
+      try {
+        return await laximoService.findApplicableVehicles(catalogCode, partNumber)
+      } catch (error) {
+        console.error('Ошибка поиска автомобилей по артикулу:', error)
+        return []
+      }
+    },
+
+    laximoVehicleInfo: async (_: unknown, { catalogCode, vehicleId, ssd, localized }: { catalogCode: string; vehicleId: string; ssd?: string; localized: boolean }) => {
+      try {
+        return await laximoService.getVehicleInfo(catalogCode, vehicleId, ssd, localized)
+      } catch (error) {
+        console.error('Ошибка получения информации об автомобиле:', error)
+        return null
+      }
+    },
+
+    laximoQuickGroups: async (_: unknown, { catalogCode, vehicleId, ssd }: { catalogCode: string; vehicleId: string; ssd?: string }) => {
+      try {
+        return await laximoService.getListQuickGroup(catalogCode, vehicleId, ssd)
+      } catch (error) {
+        console.error('Ошибка получения групп быстрого поиска:', error)
+        return []
+      }
+    },
+
+    laximoCategories: async (_: unknown, { catalogCode, vehicleId, ssd }: { catalogCode: string; vehicleId?: string; ssd?: string }) => {
+      try {
+        console.log('🔍 Запрос категорий каталога:', catalogCode, 'vehicleId:', vehicleId, 'ssd:', ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует')
+        return await laximoService.getListCategories(catalogCode, vehicleId, ssd)
+      } catch (error) {
+        console.error('Ошибка получения категорий каталога:', error)
+        return []
+      }
+    },
+
+    laximoUnits: async (_: unknown, { catalogCode, vehicleId, ssd }: { catalogCode: string; vehicleId?: string; ssd?: string }) => {
+      try {
+        console.log('🔍 Запрос узлов каталога:', catalogCode, 'vehicleId:', vehicleId)
+        return await laximoService.getListUnits(catalogCode, vehicleId, ssd)
+      } catch (error) {
+        console.error('Ошибка получения узлов каталога:', error)
+        return []
+      }
+    },
+
+    laximoQuickDetail: async (_: unknown, { catalogCode, vehicleId, quickGroupId, ssd }: { catalogCode: string; vehicleId: string; quickGroupId: string; ssd: string }) => {
+      try {
+        console.log('🔍 Запрос деталей группы быстрого поиска:', { catalogCode, vehicleId, quickGroupId })
+        return await laximoService.getListQuickDetail(catalogCode, vehicleId, quickGroupId, ssd)
+      } catch (error) {
+        console.error('Ошибка получения деталей группы быстрого поиска:', error)
+        return null
+      }
+    },
+
+    laximoOEMSearch: async (_: unknown, { catalogCode, vehicleId, oemNumber, ssd }: { catalogCode: string; vehicleId: string; oemNumber: string; ssd: string }) => {
+      try {
+        console.log('🔍 Поиск детали по OEM номеру:', { catalogCode, vehicleId, oemNumber })
+        return await laximoService.getOEMPartApplicability(catalogCode, vehicleId, oemNumber, ssd)
+      } catch (err) {
+        console.error('Ошибка поиска детали по OEM номеру:', err)
+        return null
+      }
+    },
+
+    laximoFulltextSearch: async (_: unknown, { catalogCode, vehicleId, searchQuery, ssd }: { catalogCode: string; vehicleId: string; searchQuery: string; ssd: string }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - Поиск деталей по названию:', { catalogCode, vehicleId, searchQuery, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
+        
+        // Сначала проверим поддержку полнотекстового поиска каталогом
+        const catalogInfo = await laximoService.getCatalogInfo(catalogCode)
+        if (catalogInfo) {
+          const hasFulltextSearch = catalogInfo.features.some(f => f.name === 'fulltextsearch')
+          console.log(`📋 Каталог ${catalogCode} поддерживает полнотекстовый поиск:`, hasFulltextSearch)
+          
+          if (!hasFulltextSearch) {
+            console.log('⚠️ Каталог не поддерживает полнотекстовый поиск')
+            return {
+              searchQuery: searchQuery,
+              details: []
+            }
+          }
+        } else {
+          console.log('⚠️ Не удалось получить информацию о каталоге')
+        }
+        
+        const result = await laximoService.searchVehicleDetails(catalogCode, vehicleId, searchQuery, ssd)
+        console.log('📋 Результат от LaximoService:', result ? `найдено ${result.details.length} деталей` : 'результат null')
+        
+        return result
+      } catch (err) {
+        console.error('❌ Ошибка в GraphQL resolver поиска деталей по названию:', err)
+        return null
       }
     }
   },

@@ -79,6 +79,42 @@ export const GET_AUDIT_LOGS_COUNT = gql`
   }
 `
 
+// Laximo интеграция
+export const GET_LAXIMO_BRANDS = gql`
+  query GetLaximoBrands {
+    laximoBrands {
+      brand
+      code
+      icon
+      name
+      supportdetailapplicability
+      supportparameteridentification2
+      supportquickgroups
+      supportvinsearch
+      supportframesearch
+      vinexample
+      frameexample
+      features {
+        name
+        example
+      }
+      extensions {
+        operations {
+          description
+          kind
+          name
+          fields {
+            description
+            example
+            name
+            pattern
+          }
+        }
+      }
+    }
+  }
+`
+
 export const LOGIN = gql`
   mutation Login($input: LoginInput!) {
     login(input: $input) {
