@@ -822,7 +822,9 @@ export const typeDefs = gql`
   type SMSCodeResponse {
     success: Boolean!
     sessionId: String!
-    code: String!
+    code: String # Только для разработки
+    messageId: String # ID сообщения от SMS API
+    message: String # Дополнительная информация
   }
 
   type VerificationResponse {

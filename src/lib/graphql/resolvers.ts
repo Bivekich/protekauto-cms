@@ -2,6 +2,8 @@ import { prisma } from '../prisma'
 import { createToken, comparePasswords, hashPassword } from '../auth'
 import { createAuditLog, AuditAction, getClientInfo } from '../audit'
 import { uploadBuffer, generateFileKey } from '../s3'
+import { smsService } from '../sms-service'
+import { smsCodeStore } from '../sms-code-store'
 import * as csvWriter from 'csv-writer'
 
 interface CreateUserInput {
@@ -3677,18 +3679,56 @@ export const resolvers = {
 
     sendSMSCode: async (_: unknown, { phone, sessionId }: { phone: string; sessionId?: string }) => {
       try {
+        // Используем импортированные сервисы
+        
+        const finalSessionId = sessionId || Math.random().toString(36).substring(7)
+        
+        // Проверяем, есть ли уже активный код для этого номера и сессии
+        if (smsCodeStore.hasActiveCode(phone, finalSessionId)) {
+          const ttl = smsCodeStore.getCodeTTL(phone, finalSessionId)
+          console.log(`У номера ${phone} уже есть активный код, осталось ${ttl} секунд`)
+          
+          return {
+            success: true,
+            sessionId: finalSessionId,
+            message: `Код уже отправлен. Попробуйте через ${ttl} секунд.`
+          }
+        }
+
         // Генерируем 5-значный код
         const code = Math.floor(10000 + Math.random() * 90000).toString()
         
-        // В реальной системе здесь был бы вызов SMS API
-        console.log(`SMS код для ${phone}: ${code}`)
+        // Сохраняем код в хранилище
+        smsCodeStore.saveCode(phone, code, finalSessionId)
         
-        const finalSessionId = sessionId || Math.random().toString(36).substring(7)
-
-        return {
-          success: true,
-          sessionId: finalSessionId,
-          code // В продакшене это поле не должно возвращаться!
+        // Отправляем SMS через Билайн API
+        const smsResult = await smsService.sendVerificationCode(phone, code)
+        
+        if (smsResult.success) {
+          console.log(`SMS код успешно отправлен на ${phone}, messageId: ${smsResult.messageId}`)
+          
+          return {
+            success: true,
+            sessionId: finalSessionId,
+            messageId: smsResult.messageId,
+            message: 'SMS код отправлен'
+          }
+        } else {
+          console.error(`Ошибка отправки SMS на ${phone}:`, smsResult.error)
+          
+          // Если SMS не отправилось, показываем код в консоли для разработки
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`DEVELOPMENT: SMS код для ${phone}: ${code}`)
+            
+            return {
+              success: true,
+              sessionId: finalSessionId,
+              message: 'SMS отправлен (dev mode)',
+              code // Только в dev режиме!
+            }
+          }
+          
+          throw new Error(`Не удалось отправить SMS: ${smsResult.error}`)
         }
       } catch (error) {
         console.error('Ошибка отправки SMS:', error)
@@ -3700,12 +3740,15 @@ export const resolvers = {
       try {
         console.log(`Верификация кода для ${phone}, код: ${code}, sessionId: ${sessionId}`)
         
-        // В реальной системе здесь была бы проверка кода из кэша/БД
-        // Пока что примем любой 5-значный код
-        if (code.length !== 5 || !/^\d+$/.test(code)) {
-          console.log('Неверный формат кода')
-          throw new Error('Неверный код')
+        // Проверяем код через наше хранилище
+        const verification = smsCodeStore.verifyCode(phone, code, sessionId)
+        
+        if (!verification.valid) {
+          console.log(`Код неверный: ${verification.error}`)
+          throw new Error(verification.error || 'Неверный код')
         }
+
+        console.log('Код верифицирован успешно')
 
         // Ищем клиента в базе
         const client = await prisma.client.findFirst({
