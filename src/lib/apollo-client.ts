@@ -13,17 +13,23 @@ const authLink = setContext((_, { headers }) => {
   if (typeof window !== 'undefined') {
     // Простой способ получить cookie
     const cookies = document.cookie.split(';')
+    console.log('Apollo Client: все cookies:', cookies)
     const authCookie = cookies.find(cookie => cookie.trim().startsWith('auth-token='))
+    console.log('Apollo Client: найден auth-token cookie:', authCookie)
     if (authCookie) {
       token = authCookie.split('=')[1] || null
+      console.log('Apollo Client: извлеченный токен:', token)
     }
   }
   
+  const finalHeaders = {
+    ...headers,
+    authorization: token ? `Bearer ${token}` : "",
+  }
+  console.log('Apollo Client: итоговые заголовки:', finalHeaders)
+  
   return {
-    headers: {
-      ...headers,
-      authorization: token ? `Bearer ${token}` : "",
-    }
+    headers: finalHeaders
   }
 })
 

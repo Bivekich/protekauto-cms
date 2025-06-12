@@ -20,6 +20,7 @@ import { CategoryTree } from '@/components/catalog/CategoryTree'
 import { ProductList } from '@/components/catalog/ProductList'
 import { CategoryForm } from '@/components/catalog/CategoryForm'
 import { ProductForm } from '@/components/catalog/ProductForm'
+import { ImportProductsModal } from '@/components/catalog/ImportProductsModal'
 import { GET_CATEGORIES, GET_PRODUCTS } from '@/lib/graphql/queries'
 import { EXPORT_PRODUCTS } from '@/lib/graphql/mutations'
 
@@ -30,6 +31,7 @@ export default function CatalogPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [showCategoryForm, setShowCategoryForm] = useState(false)
   const [showProductForm, setShowProductForm] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
   const [editingCategory, setEditingCategory] = useState(undefined)
   const [editingProduct, setEditingProduct] = useState(undefined)
   const [exportLoading, setExportLoading] = useState(false)
@@ -142,7 +144,11 @@ export default function CatalogPage() {
             </div>
             
             <div className="flex items-center space-x-2">
-              <Button variant="outline" size="sm">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => setShowImportModal(true)}
+              >
                 <Upload className="w-4 h-4 mr-2" />
                 Импорт
               </Button>
@@ -238,6 +244,13 @@ export default function CatalogPage() {
           />
         </DialogContent>
       </Dialog>
+
+      <ImportProductsModal
+        open={showImportModal}
+        onOpenChange={setShowImportModal}
+        categoryId={selectedCategoryId || undefined}
+        onSuccess={handleProductCreated}
+      />
     </div>
   )
 } 

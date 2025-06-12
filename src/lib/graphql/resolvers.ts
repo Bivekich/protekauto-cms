@@ -6,6 +6,7 @@ import { smsService } from '../sms-service'
 import { smsCodeStore } from '../sms-code-store'
 import { laximoService } from '../laximo-service'
 import * as csvWriter from 'csv-writer'
+import * as XLSX from 'xlsx'
 
 interface CreateUserInput {
   firstName: string
@@ -327,9 +328,10 @@ const getCategoryLevel = async (categoryId: string, level = 0): Promise<number> 
   return getCategoryLevel(category.parentId, level + 1)
 }
 
-// Функция для получения контекста из глобальной переменной
+// Функция для получения контекста из глобальной переменной (больше не используется)
 function getContext(): Context {
-  return (global as unknown as { __graphqlContext?: Context }).__graphqlContext || {}
+  const context = (global as unknown as { __graphqlContext?: Context }).__graphqlContext || {}
+  return context
 }
 
 export const resolvers = {
@@ -2475,6 +2477,222 @@ export const resolvers = {
           throw error
         }
         throw new Error('Не удалось экспортировать товары')
+      }
+    },
+
+    importProducts: async (_: unknown, { input }: { 
+      input: { file: string; categoryId?: string; replaceExisting?: boolean } 
+    }, context: Context) => {
+      try {
+        if (!context.userId) {
+          throw new Error('Пользователь не авторизован')
+        }
+
+        // Декодируем base64 файл
+        console.log('Начало импорта товаров, пользователь:', context.userId)
+        const fileData = Buffer.from(input.file, 'base64')
+        console.log('Размер файла:', fileData.length, 'байт')
+        
+        let headers: string[] = []
+        let dataRows: string[][] = []
+        
+        // Определяем тип файла по содержимому и размеру
+        const hasExcelSignature = (fileData[0] === 0x50 && fileData[1] === 0x4B) || // PK (Excel/ZIP signature)
+                                 (fileData[0] === 0xD0 && fileData[1] === 0xCF) // OLE signature (старые Excel файлы)
+        
+        // Дополнительно проверяем размер файла (Excel файлы обычно больше 1KB)
+        const isExcel = hasExcelSignature && fileData.length > 1024
+        
+        if (isExcel) {
+          try {
+            // Парсим Excel файл
+            console.log('Парсим Excel файл, размер:', fileData.length, 'байт')
+            const workbook = XLSX.read(fileData, { type: 'buffer' })
+            
+            if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+              throw new Error('Excel файл не содержит листов с данными')
+            }
+            
+            const sheetName = workbook.SheetNames[0]
+            const worksheet = workbook.Sheets[sheetName]
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as string[][]
+            
+            console.log('Обработано строк из Excel:', jsonData.length)
+            
+            if (jsonData.length < 2) {
+              throw new Error('Файл должен содержать заголовки и хотя бы одну строку данных')
+            }
+            
+            headers = jsonData[0].map(h => String(h || '').trim())
+            dataRows = jsonData.slice(1).filter(row => row.some(cell => String(cell || '').trim()))
+            
+            console.log('Заголовки:', headers)
+            console.log('Строк данных:', dataRows.length)
+          } catch (excelError) {
+            console.error('Ошибка парсинга Excel файла:', excelError)
+            throw new Error('Не удалось прочитать Excel файл. Убедитесь, что файл не поврежден.')
+          }
+        } else {
+          try {
+            // Парсим как CSV файл
+            console.log('Парсим как CSV файл, размер:', fileData.length, 'байт')
+            const fileContent = fileData.toString('utf-8')
+            const lines = fileContent.split('\n').filter(line => line.trim())
+            
+            console.log('Строк в CSV:', lines.length)
+            
+            if (lines.length < 2) {
+              throw new Error('Файл должен содержать заголовки и хотя бы одну строку данных')
+            }
+
+            headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim())
+            dataRows = lines.slice(1).map(line => 
+              line.split(',').map(v => v.replace(/"/g, '').trim())
+            )
+            
+            console.log('Заголовки CSV:', headers)
+            console.log('Строк данных CSV:', dataRows.length)
+          } catch (csvError) {
+            console.error('Ошибка парсинга CSV файла:', csvError)
+            throw new Error('Не удалось прочитать файл. Поддерживаются только форматы .xlsx и .csv')
+          }
+        }
+
+        const result = {
+          success: 0,
+          errors: [] as string[],
+          total: dataRows.length,
+          warnings: [] as string[]
+        }
+
+        // Обрабатываем каждую строку
+        for (let i = 0; i < dataRows.length; i++) {
+          const lineNumber = i + 2
+          
+          try {
+            const values = dataRows[i].map(v => String(v || '').trim())
+            
+            // Если строка содержит меньше колонок, дополняем пустыми значениями
+            // Если больше - обрезаем до нужного количества
+            while (values.length < headers.length) {
+              values.push('')
+            }
+            if (values.length > headers.length) {
+              values.splice(headers.length)
+            }
+
+            // Создаем объект из заголовков и значений
+            const rowData: Record<string, string> = {}
+            headers.forEach((header, index) => {
+              rowData[header] = values[index]
+            })
+
+            // Валидация обязательных полей
+            const name = rowData['Название'] || rowData['Наименование'] || rowData['name'] || ''
+            if (!name) {
+              result.errors.push(`Строка ${lineNumber}: отсутствует название товара`)
+              continue
+            }
+
+            // Проверяем существование товара по артикулу
+            const article = rowData['Артикул'] || rowData['article'] || ''
+            let existingProduct: any = null
+            
+            if (article) {
+              existingProduct = await prisma.product.findFirst({
+                where: { article }
+              })
+            }
+
+            // Если товар существует и не включен режим замещения
+            if (existingProduct && !input.replaceExisting) {
+              result.warnings.push(`Строка ${lineNumber}: товар с артикулом "${article}" уже существует`)
+              continue
+            }
+
+            // Подготовка данных для создания/обновления товара
+            const manufacturer = rowData['Производитель'] || rowData['manufacturer'] || ''
+            const description = rowData['Описание'] || rowData['description'] || 
+              (manufacturer ? `Производитель: ${manufacturer}` : undefined)
+            
+            const productData = {
+              name: name,
+              article: article || undefined,
+              description: description,
+              wholesalePrice: parseFloat(rowData['Цена опт'] || rowData['wholesalePrice'] || rowData['Цена АвтоЕвро ООО НДС'] || '0') || undefined,
+              retailPrice: parseFloat(rowData['Цена розница'] || rowData['retailPrice'] || rowData['Цена АвтоЕвро ООО НДС'] || '0') || undefined,
+              stock: parseInt(rowData['Остаток'] || rowData['Доступно'] || rowData['stock'] || '0') || 0,
+              unit: rowData['Единица'] || rowData['unit'] || 'шт',
+              weight: parseFloat(rowData['Вес'] || rowData['weight'] || '0') || undefined,
+              dimensions: rowData['Размеры'] || rowData['dimensions'] || undefined,
+              isVisible: true
+            }
+
+            // Генерируем slug
+            const slug = createSlug(productData.name)
+
+            if (existingProduct && input.replaceExisting) {
+              // Обновляем существующий товар
+              await prisma.product.update({
+                where: { id: existingProduct.id },
+                data: {
+                  ...productData,
+                  slug,
+                  updatedAt: new Date()
+                }
+              })
+            } else {
+              // Создаем новый товар
+              const createData: any = {
+                ...productData,
+                slug
+              }
+
+              // Добавляем категорию если указана
+              if (input.categoryId) {
+                createData.categories = {
+                  connect: [{ id: input.categoryId }]
+                }
+              }
+
+              await prisma.product.create({
+                data: createData
+              })
+            }
+
+            result.success++
+          } catch (error) {
+            console.error(`Ошибка обработки строки ${lineNumber}:`, error)
+            result.errors.push(`Строка ${lineNumber}: ошибка создания товара`)
+          }
+        }
+
+        // Логируем действие
+        console.log('Результат импорта:', {
+          total: result.total,
+          success: result.success,
+          errors: result.errors.length,
+          warnings: result.warnings.length
+        })
+        
+        if (context.headers) {
+          const { ipAddress, userAgent } = getClientInfo(context.headers)
+          await createAuditLog({
+            userId: context.userId,
+            action: AuditAction.PRODUCT_UPDATE,
+            details: `Импорт товаров: ${result.success} успешно, ${result.errors.length} ошибок`,
+            ipAddress,
+            userAgent
+          })
+        }
+
+        return result
+      } catch (error) {
+        console.error('Ошибка импорта товаров:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось импортировать товары')
       }
     },
 

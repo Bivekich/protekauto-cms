@@ -203,6 +203,17 @@ export const EXPORT_PRODUCTS = gql`
   }
 `
 
+export const IMPORT_PRODUCTS = gql`
+  mutation ImportProducts($input: ImportProductsInput!) {
+    importProducts(input: $input) {
+      success
+      errors
+      total
+      warnings
+    }
+  }
+`
+
 // Мутации для клиентов
 export const CREATE_CLIENT = gql`
   mutation CreateClient($input: ClientInput!, $vehicles: [ClientVehicleInput!], $discounts: [ClientDiscountInput!]) {

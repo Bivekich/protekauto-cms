@@ -888,6 +888,7 @@ export const typeDefs = gql`
     deleteProducts(ids: [ID!]!): BulkOperationResult!
     updateProductsVisibility(ids: [ID!]!, isVisible: Boolean!): BulkOperationResult!
     exportProducts(categoryId: String, search: String, format: String): ExportResult!
+    importProducts(input: ImportProductsInput!): ImportResult!
     
     # Опции
     createOption(input: OptionInput!): Option!
@@ -1196,5 +1197,39 @@ export const typeDefs = gql`
     name: String!
     brand: String
     description: String
+  }
+
+  # Типы для импорта товаров
+  input ImportProductsInput {
+    file: String!
+    categoryId: String
+    replaceExisting: Boolean
+  }
+
+  type ImportResult {
+    success: Int!
+    errors: [String!]!
+    total: Int!
+    warnings: [String!]!
+  }
+
+  type ImportPreview {
+    headers: [String!]!
+    sampleData: [[String!]!]!
+    totalRows: Int!
+    mapping: ImportMapping!
+  }
+
+  type ImportMapping {
+    name: String
+    article: String
+    description: String
+    wholesalePrice: String
+    retailPrice: String
+    stock: String
+    unit: String
+    weight: String
+    dimensions: String
+    category: String
   }
 ` 
