@@ -28,16 +28,14 @@ services:
       - BEELINE_SMS_USER=${BEELINE_SMS_USER}
       - BEELINE_SMS_PASS=${BEELINE_SMS_PASS}
       - BEELINE_SMS_SENDER=${BEELINE_SMS_SENDER}
+
+      # Laximo API
+      - LAXIMO_LOGIN=${LAXIMO_LOGIN}
+      - LAXIMO_PASSWORD=${LAXIMO_PASSWORD}
       
       # Окружение
       - NODE_ENV=production
       
     restart: unless-stopped
     
-    # Healthcheck для проверки состояния
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+
