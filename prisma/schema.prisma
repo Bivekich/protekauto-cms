@@ -88,6 +88,7 @@ model Product {
   accessoryProducts Product[] @relation("AccessoryProducts")
   accessoryTo Product[] @relation("AccessoryProducts")
   history     ProductHistory[]
+  orderItems  OrderItem[]
   
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -253,6 +254,7 @@ model Client {
   legalEntities     ClientLegalEntity[]
   bankDetails       ClientBankDetails[]
   balanceHistory    ClientBalanceHistory[]
+  orders            Order[]
   
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
@@ -616,4 +618,91 @@ enum DeliveryType {
   PICKUP     // Самовывоз
   POST       // Почта России
   TRANSPORT  // Транспортная компания
+}
+
+// Модели для заказов и платежей
+model Order {
+  id              String      @id @default(cuid())
+  orderNumber     String      @unique
+  clientId        String?
+  client          Client?     @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientEmail     String?     // Для гостевых заказов
+  clientPhone     String?     // Для гостевых заказов
+  clientName      String?     // Для гостевых заказов
+  status          OrderStatus @default(PENDING)
+  totalAmount     Float
+  discountAmount  Float       @default(0)
+  finalAmount     Float       // totalAmount - discountAmount
+  currency        String      @default("RUB")
+  items           OrderItem[]
+  payments        Payment[]
+  deliveryAddress String?
+  comment         String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String? // Для внутренних товаров
+  product     Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  
+  // Для внешних товаров (AutoEuro)
+  externalId  String? // ID товара во внешней системе
+  name        String  // Название товара
+  article     String? // Артикул
+  brand       String? // Бренд
+  price       Float   // Цена за единицу
+  quantity    Int     // Количество
+  totalPrice  Float   // price * quantity
+  
+  createdAt   DateTime @default(now())
+
+  @@map("order_items")
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  orderId           String
+  order             Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  yookassaPaymentId String        @unique // ID платежа в YooKassa
+  status            PaymentStatus @default(PENDING)
+  amount            Float
+  currency          String        @default("RUB")
+  paymentMethod     String?       // Способ оплаты
+  description       String?
+  confirmationUrl   String?       // URL для подтверждения платежа
+  
+  // Метаданные от YooKassa
+  metadata          Json?
+  
+  // Даты
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  paidAt            DateTime?     // Дата успешной оплаты
+  canceledAt        DateTime?     // Дата отмены
+
+  @@map("payments")
+}
+
+enum OrderStatus {
+  PENDING     // Ожидает оплаты
+  PAID        // Оплачен
+  PROCESSING  // В обработке
+  SHIPPED     // Отправлен
+  DELIVERED   // Доставлен
+  CANCELED    // Отменен
+  REFUNDED    // Возвращен
+}
+
+enum PaymentStatus {
+  PENDING     // Ожидает оплаты
+  WAITING_FOR_CAPTURE // Ожидает подтверждения
+  SUCCEEDED   // Успешно оплачен
+  CANCELED    // Отменен
+  REFUNDED    // Возвращен
 }

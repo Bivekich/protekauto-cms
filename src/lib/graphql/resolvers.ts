@@ -4,7 +4,9 @@ import { createAuditLog, AuditAction, getClientInfo } from '../audit'
 import { uploadBuffer, generateFileKey } from '../s3'
 import { smsService } from '../sms-service'
 import { smsCodeStore } from '../sms-code-store'
-import { laximoService } from '../laximo-service'
+import { laximoService, laximoDocService, laximoUnitService } from '../laximo-service'
+import { autoEuroService } from '../autoeuro-service'
+import { yooKassaService } from '../yookassa-service'
 import * as csvWriter from 'csv-writer'
 import * as XLSX from 'xlsx'
 
@@ -297,6 +299,33 @@ interface ClientFilterInput {
   profileId?: string
 }
 
+// Интерфейсы для заказов и платежей
+interface CreateOrderInput {
+  clientId?: string
+  clientEmail?: string
+  clientPhone?: string
+  clientName?: string
+  items: OrderItemInput[]
+  deliveryAddress?: string
+  comment?: string
+}
+
+interface OrderItemInput {
+  productId?: string
+  externalId?: string
+  name: string
+  article?: string
+  brand?: string
+  price: number
+  quantity: number
+}
+
+interface CreatePaymentInput {
+  orderId: string
+  returnUrl: string
+  description?: string
+}
+
 // Утилиты
 const createSlug = (text: string): string => {
   return text
@@ -321,12 +350,27 @@ const getCategoryLevel = async (categoryId: string, level = 0): Promise<number> 
     select: { parentId: true }
   })
   
-  if (!category?.parentId) {
+  if (!category || !category.parentId) {
     return level
   }
   
   return getCategoryLevel(category.parentId, level + 1)
 }
+
+// Функция для расчета дней доставки из строки даты
+const calculateDeliveryDays = (deliveryDateStr: string): number => {
+  if (!deliveryDateStr) return 0;
+  
+  try {
+    const deliveryDate = new Date(deliveryDateStr);
+    const today = new Date();
+    const diffTime = deliveryDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return Math.max(0, diffDays);
+  } catch (error) {
+    return 0;
+  }
+};
 
 // Функция для получения контекста из глобальной переменной (больше не используется)
 function getContext(): Context {
@@ -1101,6 +1145,18 @@ export const resolvers = {
       }
     },
 
+    laximoFindVehicleByPlateGlobal: async (_: unknown, { plateNumber }: { plateNumber: string }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - Глобальный поиск автомобиля по госномеру:', plateNumber)
+        const result = await laximoService.findVehicleByPlateNumberGlobal(plateNumber)
+        console.log('📋 Результат глобального поиска по госномеру:', result ? `найдено ${result.length} автомобилей` : 'результат пустой')
+        return result
+      } catch (error) {
+        console.error('❌ Ошибка глобального поиска автомобиля по госномеру:', error)
+        return []
+      }
+    },
+
     laximoFindPartReferences: async (_: unknown, { partNumber }: { partNumber: string }) => {
       try {
         return await laximoService.findPartReferences(partNumber)
@@ -1116,6 +1172,22 @@ export const resolvers = {
       } catch (error) {
         console.error('Ошибка поиска автомобилей по артикулу:', error)
         return []
+      }
+    },
+
+    laximoFindVehiclesByPartNumber: async (_: unknown, { partNumber }: { partNumber: string }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - Комплексный поиск автомобилей по артикулу:', partNumber)
+        const result = await laximoService.findVehiclesByPartNumber(partNumber)
+        console.log('📋 Результат комплексного поиска:', result ? `найдено ${result.totalVehicles} автомобилей в ${result.catalogs.length} каталогах` : 'результат null')
+        return result
+      } catch (error) {
+        console.error('❌ Ошибка комплексного поиска автомобилей по артикулу:', error)
+        return {
+          partNumber,
+          catalogs: [],
+          totalVehicles: 0
+        }
       }
     },
 
@@ -1147,10 +1219,10 @@ export const resolvers = {
       }
     },
 
-    laximoUnits: async (_: unknown, { catalogCode, vehicleId, ssd }: { catalogCode: string; vehicleId?: string; ssd?: string }) => {
+    laximoUnits: async (_: unknown, { catalogCode, vehicleId, ssd, categoryId }: { catalogCode: string; vehicleId?: string; ssd?: string; categoryId?: string }) => {
       try {
-        console.log('🔍 Запрос узлов каталога:', catalogCode, 'vehicleId:', vehicleId)
-        return await laximoService.getListUnits(catalogCode, vehicleId, ssd)
+        console.log('🔍 Запрос узлов каталога:', catalogCode, 'vehicleId:', vehicleId, 'categoryId:', categoryId)
+        return await laximoService.getListUnits(catalogCode, vehicleId, ssd, categoryId)
       } catch (error) {
         console.error('Ошибка получения узлов каталога:', error)
         return []
@@ -1159,11 +1231,25 @@ export const resolvers = {
 
     laximoQuickDetail: async (_: unknown, { catalogCode, vehicleId, quickGroupId, ssd }: { catalogCode: string; vehicleId: string; quickGroupId: string; ssd: string }) => {
       try {
-        console.log('🔍 Запрос деталей группы быстрого поиска:', { catalogCode, vehicleId, quickGroupId })
+        console.log('🔍 Запрос деталей группы быстрого поиска:', { 
+          catalogCode, 
+          vehicleId, 
+          quickGroupId, 
+          quickGroupIdType: typeof quickGroupId,
+          quickGroupIdLength: quickGroupId?.length,
+          ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует'
+        })
+        
+        // Валидация параметров
+        if (!quickGroupId || quickGroupId.trim() === '') {
+          console.error('❌ Пустой quickGroupId:', quickGroupId)
+          throw new Error(`Пустой ID группы: "${quickGroupId}"`)
+        }
+        
         return await laximoService.getListQuickDetail(catalogCode, vehicleId, quickGroupId, ssd)
       } catch (error) {
         console.error('Ошибка получения деталей группы быстрого поиска:', error)
-        return null
+        throw error // Пробрасываем ошибку наверх
       }
     },
 
@@ -1205,6 +1291,406 @@ export const resolvers = {
       } catch (err) {
         console.error('❌ Ошибка в GraphQL resolver поиска деталей по названию:', err)
         return null
+      }
+    },
+
+    laximoDocFindOEM: async (_: unknown, { oemNumber, brand, replacementTypes }: { oemNumber: string; brand?: string; replacementTypes?: string }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - Doc FindOEM поиск по артикулу:', { oemNumber, brand, replacementTypes })
+        
+        const result = await laximoDocService.findOEM(oemNumber, brand, replacementTypes)
+        console.log('📋 Результат от LaximoDocService:', result ? `найдено ${result.details.length} деталей` : 'результат null')
+        
+        return result
+      } catch (err) {
+        console.error('❌ Ошибка в GraphQL resolver Doc FindOEM:', err)
+        return null
+      }
+    },
+
+    // Резолверы для работы с деталями узлов
+    laximoUnitInfo: async (_: unknown, { catalogCode, vehicleId, unitId, ssd }: { catalogCode: string; vehicleId: string; unitId: string; ssd: string }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - получение информации об узле:', { catalogCode, vehicleId, unitId })
+        
+        const result = await laximoUnitService.getUnitInfo(catalogCode, vehicleId, unitId, ssd)
+        console.log('📋 Результат от LaximoUnitService:', result ? `найден узел ${result.name}` : 'узел не найден')
+        
+        return result
+      } catch (err) {
+        console.error('❌ Ошибка в GraphQL resolver UnitInfo:', err)
+        return null
+      }
+    },
+
+    laximoUnitDetails: async (_: unknown, { catalogCode, vehicleId, unitId, ssd }: { catalogCode: string; vehicleId: string; unitId: string; ssd: string }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - получение деталей узла:', { catalogCode, vehicleId, unitId })
+        
+        const result = await laximoUnitService.getUnitDetails(catalogCode, vehicleId, unitId, ssd)
+        console.log('📋 Результат от LaximoUnitService:', result ? `найдено ${result.length} деталей` : 'детали не найдены')
+        
+        return result || []
+      } catch (err) {
+        console.error('❌ Ошибка в GraphQL resolver UnitDetails:', err)
+        return []
+      }
+    },
+
+    laximoUnitImageMap: async (_: unknown, { catalogCode, vehicleId, unitId, ssd }: { catalogCode: string; vehicleId: string; unitId: string; ssd: string }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - получение карты изображений узла:', { catalogCode, vehicleId, unitId })
+        
+        const result = await laximoUnitService.getUnitImageMap(catalogCode, vehicleId, unitId, ssd)
+        console.log('📋 Результат от LaximoUnitService:', result ? `найдена карта с ${result.coordinates.length} координатами` : 'карта не найдена')
+        
+        return result
+      } catch (err) {
+        console.error('❌ Ошибка в GraphQL resolver UnitImageMap:', err)
+        return null
+      }
+    },
+
+    // Поиск товаров и предложений
+    searchProductOffers: async (_: unknown, { articleNumber, brand }: { articleNumber: string; brand: string }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - поиск предложений для товара:', { articleNumber, brand })
+
+        // 1. Поиск в нашей базе данных
+        const internalProducts = await prisma.product.findMany({
+          where: {
+            article: {
+              equals: articleNumber,
+              mode: 'insensitive'
+            }
+          },
+          include: {
+            categories: true,
+            images: { orderBy: { order: 'asc' } }
+          }
+        })
+
+        console.log(`📦 Найдено ${internalProducts.length} товаров в нашей базе`)
+
+        // 2. Поиск в AutoEuro
+        let externalOffers: any[] = []
+        try {
+          console.log('🔍 GraphQL Resolver - начинаем поиск в AutoEuro:', { articleNumber, brand })
+          
+          const autoEuroResult = await autoEuroService.searchItems({
+            code: articleNumber,
+            brand: brand,
+            with_crosses: false,
+            with_offers: true
+          })
+
+          console.log('📊 GraphQL Resolver - результат AutoEuro:', {
+            success: autoEuroResult.success,
+            dataLength: autoEuroResult.data?.length || 0,
+            error: autoEuroResult.error
+          })
+
+          if (autoEuroResult.success && autoEuroResult.data) {
+            console.log('✅ GraphQL Resolver - обрабатываем данные AutoEuro, количество:', autoEuroResult.data.length)
+            
+            externalOffers = autoEuroResult.data.map(offer => ({
+              offerKey: offer.offer_key,
+              brand: offer.brand,
+              code: offer.code,
+              name: offer.name,
+              price: parseFloat(offer.price.toString()),
+              currency: offer.currency || 'RUB',
+              deliveryTime: calculateDeliveryDays(offer.delivery_time || ''),
+              deliveryTimeMax: calculateDeliveryDays(offer.delivery_time_max || ''),
+              quantity: offer.amount || 0,
+              warehouse: offer.warehouse_name || 'Внешний склад',
+              supplier: 'AutoEuro',
+              canPurchase: true
+            }))
+            
+            console.log('🎯 GraphQL Resolver - создано внешних предложений:', externalOffers.length)
+          } else {
+            console.log('❌ GraphQL Resolver - AutoEuro не вернул данные:', autoEuroResult)
+          }
+        } catch (error) {
+          console.error('❌ Ошибка поиска в AutoEuro:', error)
+        }
+
+        console.log(`🌐 Найдено ${externalOffers.length} предложений в AutoEuro`)
+        console.log('📦 Первые 3 внешних предложения:', externalOffers.slice(0, 3))
+
+        // 3. Поиск аналогов через Laximo
+        const analogs: any[] = []
+        try {
+          const laximoResult = await laximoDocService.findOEM(articleNumber, brand)
+          if (laximoResult && laximoResult.details) {
+            for (const detail of laximoResult.details) {
+              if (detail.replacements && detail.replacements.length > 0) {
+                for (const replacement of detail.replacements) {
+                  // Поиск каждого аналога в нашей базе и AutoEuro
+                  const analogArticle = replacement.detail.formattedoem || replacement.detail.oem
+                  const analogBrand = replacement.detail.manufacturer
+
+                  // Поиск в нашей базе
+                  const analogInternalProducts = await prisma.product.findMany({
+                    where: {
+                      article: {
+                        equals: analogArticle,
+                        mode: 'insensitive'
+                      }
+                    }
+                  })
+
+                  // Поиск в AutoEuro
+                  let analogExternalOffers: any[] = []
+                  try {
+                    const analogAutoEuroResult = await autoEuroService.searchItems({
+                      code: analogArticle,
+                      brand: analogBrand,
+                      with_crosses: false,
+                      with_offers: true
+                    })
+
+                    if (analogAutoEuroResult.success && analogAutoEuroResult.data) {
+                      analogExternalOffers = analogAutoEuroResult.data.map(offer => ({
+                        offerKey: offer.offer_key,
+                        brand: offer.brand,
+                        code: offer.code,
+                        name: offer.name,
+                        price: parseFloat(offer.price.toString()),
+                        currency: offer.currency || 'RUB',
+                        deliveryTime: calculateDeliveryDays(offer.delivery_time || ''),
+                        deliveryTimeMax: calculateDeliveryDays(offer.delivery_time_max || ''),
+                        quantity: offer.amount || 0,
+                        warehouse: offer.warehouse_name || 'Внешний склад',
+                        supplier: 'AutoEuro',
+                        canPurchase: true
+                      }))
+                    }
+                  } catch (error) {
+                    console.error(`❌ Ошибка поиска аналога ${analogArticle} в AutoEuro:`, error)
+                  }
+
+                  if (analogInternalProducts.length > 0 || analogExternalOffers.length > 0) {
+                    analogs.push({
+                      brand: analogBrand,
+                      articleNumber: analogArticle,
+                      name: replacement.detail.name,
+                      type: replacement.type,
+                      internalOffers: analogInternalProducts.map(product => ({
+                        id: product.id,
+                        productId: product.id,
+                        price: product.retailPrice || 0,
+                        quantity: product.stock || 0,
+                        warehouse: 'Основной склад',
+                        deliveryDays: 1,
+                        available: (product.stock || 0) > 0,
+                        rating: 4.8,
+                        supplier: 'Protek'
+                      })),
+                      externalOffers: analogExternalOffers
+                    })
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.error('❌ Ошибка поиска аналогов через Laximo:', error)
+        }
+
+        console.log(`🔄 Найдено ${analogs.length} аналогов`)
+
+        // 4. Формируем внутренние предложения
+        const internalOffers = internalProducts.map(product => ({
+          id: product.id,
+          productId: product.id,
+          price: product.retailPrice || 0,
+          quantity: product.stock || 0,
+          warehouse: 'Основной склад',
+          deliveryDays: 1,
+          available: (product.stock || 0) > 0,
+          rating: 4.8,
+          supplier: 'Protek'
+        }))
+
+        // 5. Определяем название товара
+        let productName = ''
+        if (internalProducts.length > 0) {
+          productName = internalProducts[0].name
+        } else if (externalOffers.length > 0) {
+          productName = externalOffers[0].name
+        } else {
+          productName = `${brand} ${articleNumber}`
+        }
+
+        const result = {
+          articleNumber,
+          brand,
+          name: productName,
+          internalOffers,
+          externalOffers,
+          analogs,
+          hasInternalStock: internalOffers.some(offer => offer.available),
+          totalOffers: internalOffers.length + externalOffers.length
+        }
+
+        console.log('✅ Результат поиска предложений:', {
+          articleNumber,
+          brand,
+          internalOffers: result.internalOffers.length,
+          externalOffers: result.externalOffers.length,
+          analogs: result.analogs.length,
+          hasInternalStock: result.hasInternalStock
+        })
+
+        console.log('🔍 Детали результата:')
+        console.log('- Внутренние предложения:', result.internalOffers)
+        console.log('- Внешние предложения:', result.externalOffers.slice(0, 3))
+        console.log('- Аналоги:', result.analogs.length)
+
+        return result
+      } catch (error) {
+        console.error('❌ Ошибка в GraphQL resolver searchProductOffers:', error)
+        throw new Error('Не удалось найти предложения для товара')
+      }
+    },
+
+    // Заказы и платежи
+    orders: async (_: unknown, { clientId, status, limit = 50, offset = 0 }: { 
+      clientId?: string; 
+      status?: string; 
+      limit?: number; 
+      offset?: number 
+    }, context: Context) => {
+      try {
+        const where: any = {}
+        
+        if (clientId) {
+          where.clientId = clientId
+        }
+        
+        if (status) {
+          where.status = status
+        }
+
+        const orders = await prisma.order.findMany({
+          where,
+          include: {
+            client: true,
+            items: {
+              include: {
+                product: true
+              }
+            },
+            payments: true
+          },
+          orderBy: { createdAt: 'desc' },
+          take: limit,
+          skip: offset
+        })
+
+        return orders
+      } catch (error) {
+        console.error('Ошибка получения заказов:', error)
+        throw new Error('Не удалось получить заказы')
+      }
+    },
+
+    order: async (_: unknown, { id }: { id: string }) => {
+      try {
+        const order = await prisma.order.findUnique({
+          where: { id },
+          include: {
+            client: true,
+            items: {
+              include: {
+                product: true
+              }
+            },
+            payments: true
+          }
+        })
+
+        return order
+      } catch (error) {
+        console.error('Ошибка получения заказа:', error)
+        throw new Error('Не удалось получить заказ')
+      }
+    },
+
+    orderByNumber: async (_: unknown, { orderNumber }: { orderNumber: string }) => {
+      try {
+        const order = await prisma.order.findUnique({
+          where: { orderNumber },
+          include: {
+            client: true,
+            items: {
+              include: {
+                product: true
+              }
+            },
+            payments: true
+          }
+        })
+
+        return order
+      } catch (error) {
+        console.error('Ошибка получения заказа по номеру:', error)
+        throw new Error('Не удалось получить заказ')
+      }
+    },
+
+    payments: async (_: unknown, { orderId, status }: { orderId?: string; status?: string }) => {
+      try {
+        const where: any = {}
+        
+        if (orderId) {
+          where.orderId = orderId
+        }
+        
+        if (status) {
+          where.status = status
+        }
+
+        const payments = await prisma.payment.findMany({
+          where,
+          include: {
+            order: {
+              include: {
+                client: true,
+                items: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        })
+
+        return payments
+      } catch (error) {
+        console.error('Ошибка получения платежей:', error)
+        throw new Error('Не удалось получить платежи')
+      }
+    },
+
+    payment: async (_: unknown, { id }: { id: string }) => {
+      try {
+        const payment = await prisma.payment.findUnique({
+          where: { id },
+          include: {
+            order: {
+              include: {
+                client: true,
+                items: true
+              }
+            }
+          }
+        })
+
+        return payment
+      } catch (error) {
+        console.error('Ошибка получения платежа:', error)
+        throw new Error('Не удалось получить платеж')
       }
     }
   },
@@ -4431,6 +4917,218 @@ export const resolvers = {
       } catch (error) {
         console.error('Ошибка создания юридического лица:', error)
         throw new Error('Не удалось создать юридическое лицо')
+      }
+    },
+
+    // Заказы и платежи
+    createOrder: async (_: unknown, { input }: { input: CreateOrderInput }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        
+        // Генерируем номер заказа
+        const orderNumber = `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
+        
+        // Вычисляем общую сумму
+        const totalAmount = input.items.reduce((sum, item) => sum + (item.price * item.quantity), 0)
+        
+        const order = await prisma.order.create({
+          data: {
+            orderNumber,
+            clientId: input.clientId,
+            clientEmail: input.clientEmail,
+            clientPhone: input.clientPhone,
+            clientName: input.clientName,
+            totalAmount,
+            finalAmount: totalAmount, // Пока без скидок
+            deliveryAddress: input.deliveryAddress,
+            comment: input.comment,
+            items: {
+              create: input.items.map(item => ({
+                productId: item.productId,
+                externalId: item.externalId,
+                name: item.name,
+                article: item.article,
+                brand: item.brand,
+                price: item.price,
+                quantity: item.quantity,
+                totalPrice: item.price * item.quantity
+              }))
+            }
+          },
+          include: {
+            client: true,
+            items: {
+              include: {
+                product: true
+              }
+            },
+            payments: true
+          }
+        })
+
+        return order
+      } catch (error) {
+        console.error('Ошибка создания заказа:', error)
+        throw new Error('Не удалось создать заказ')
+      }
+    },
+
+    updateOrderStatus: async (_: unknown, { id, status }: { id: string; status: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.userId) {
+          throw new Error('Пользователь не авторизован')
+        }
+
+        const order = await prisma.order.update({
+          where: { id },
+          data: { status: status as any },
+          include: {
+            client: true,
+            items: {
+              include: {
+                product: true
+              }
+            },
+            payments: true
+          }
+        })
+
+        return order
+      } catch (error) {
+        console.error('Ошибка обновления статуса заказа:', error)
+        throw new Error('Не удалось обновить статус заказа')
+      }
+    },
+
+    cancelOrder: async (_: unknown, { id }: { id: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.userId) {
+          throw new Error('Пользователь не авторизован')
+        }
+
+        const order = await prisma.order.update({
+          where: { id },
+          data: { status: 'CANCELED' },
+          include: {
+            client: true,
+            items: {
+              include: {
+                product: true
+              }
+            },
+            payments: true
+          }
+        })
+
+        return order
+      } catch (error) {
+        console.error('Ошибка отмены заказа:', error)
+        throw new Error('Не удалось отменить заказ')
+      }
+    },
+
+    createPayment: async (_: unknown, { input }: { input: CreatePaymentInput }, context: Context) => {
+      try {
+        // Получаем заказ
+        const order = await prisma.order.findUnique({
+          where: { id: input.orderId },
+          include: {
+            client: true,
+            items: true
+          }
+        })
+
+        if (!order) {
+          throw new Error('Заказ не найден')
+        }
+
+        // Создаем платеж в YooKassa
+        const yooKassaPayment = await yooKassaService.createPayment({
+          amount: order.finalAmount,
+          description: input.description || `Оплата заказа ${order.orderNumber}`,
+          returnUrl: input.returnUrl,
+          metadata: {
+            orderId: order.id,
+            orderNumber: order.orderNumber
+          }
+        })
+
+        // Сохраняем платеж в базе данных
+        const payment = await prisma.payment.create({
+          data: {
+            orderId: order.id,
+            yookassaPaymentId: yooKassaPayment.id,
+            amount: order.finalAmount,
+            description: input.description || `Оплата заказа ${order.orderNumber}`,
+            confirmationUrl: yooKassaPayment.confirmation?.confirmation_url,
+            status: yooKassaPayment.status === 'pending' ? 'PENDING' : 
+                   yooKassaPayment.status === 'waiting_for_capture' ? 'WAITING_FOR_CAPTURE' :
+                   yooKassaPayment.status === 'succeeded' ? 'SUCCEEDED' : 'CANCELED'
+          },
+          include: {
+            order: {
+              include: {
+                client: true,
+                items: true
+              }
+            }
+          }
+        })
+
+        return {
+          payment,
+          confirmationUrl: yooKassaPayment.confirmation?.confirmation_url || ''
+        }
+      } catch (error) {
+        console.error('Ошибка создания платежа:', error)
+        throw new Error('Не удалось создать платеж')
+      }
+    },
+
+    cancelPayment: async (_: unknown, { id }: { id: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.userId) {
+          throw new Error('Пользователь не авторизован')
+        }
+
+        const payment = await prisma.payment.findUnique({
+          where: { id },
+          include: {
+            order: true
+          }
+        })
+
+        if (!payment) {
+          throw new Error('Платеж не найден')
+        }
+
+        // Отменяем платеж в YooKassa
+        await yooKassaService.cancelPayment(payment.yookassaPaymentId)
+
+        // Обновляем статус в базе данных
+        const updatedPayment = await prisma.payment.update({
+          where: { id },
+          data: { 
+            status: 'CANCELED',
+            canceledAt: new Date()
+          },
+          include: {
+            order: {
+              include: {
+                client: true,
+                items: true
+              }
+            }
+          }
+        })
+
+        return updatedPayment
+      } catch (error) {
+        console.error('Ошибка отмены платежа:', error)
+        throw new Error('Не удалось отменить платеж')
       }
     }
   }

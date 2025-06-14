@@ -180,7 +180,333 @@ export interface LaximoFulltextDetail {
   description?: string
 }
 
+// Интерфейсы для модуля Doc
+export interface LaximoDocFindOEMResult {
+  details: LaximoDocDetail[]
+}
 
+export interface LaximoDocDetail {
+  detailid: string
+  formattedoem: string
+  manufacturer: string
+  manufacturerid: string
+  name: string
+  oem: string
+  volume?: string
+  weight?: string
+  replacements: LaximoDocReplacement[]
+}
+
+export interface LaximoDocReplacement {
+  type: string
+  way: string
+  replacementid: string
+  rate?: string
+  detail: LaximoDocReplacementDetail
+}
+
+export interface LaximoDocReplacementDetail {
+  detailid: string
+  formattedoem: string
+  manufacturer: string
+  manufacturerid: string
+  name: string
+  oem: string
+  weight?: string
+  icon?: string
+}
+
+export interface LaximoCatalogVehicleResult {
+  catalogCode: string
+  catalogName: string
+  brand: string
+  vehicles: LaximoVehicleSearchResult[]
+  vehicleCount: number
+}
+
+export interface LaximoVehiclesByPartResult {
+  partNumber: string
+  catalogs: LaximoCatalogVehicleResult[]
+  totalVehicles: number
+}
+
+// Дополнительные интерфейсы для работы с деталями узлов
+export interface LaximoUnitImageMap {
+  unitid: string
+  imageurl?: string
+  largeimageurl?: string
+  coordinates: LaximoImageCoordinate[]
+}
+
+export interface LaximoImageCoordinate {
+  detailid: string
+  codeonimage?: string
+  x: number
+  y: number
+  width: number
+  height: number
+  shape: string
+}
+
+/**
+ * Laximo Doc Service для поиска деталей по артикулу
+ * Использует отдельные данные авторизации для модуля Doc
+ */
+class LaximoDocService {
+  // Endpoints для Aftermarket (Doc) модуля согласно WSDL
+  private soap11Url = 'https://aws.laximo.ru/ec.Kito.Aftermarket/services/Catalog.CatalogHttpSoap11Endpoint/'
+  private soap12Url = 'https://aws.laximo.ru/ec.Kito.Aftermarket/services/Catalog.CatalogHttpSoap12Endpoint/'
+  private login = process.env.LAXIMO_DOC_LOGIN || ''
+  private password = process.env.LAXIMO_DOC_PASSWORD || ''
+
+  constructor() {
+    console.log('🔧 LaximoDocService инициализация:')
+    console.log('📧 Login:', this.login ? `${this.login.substring(0, 3)}***` : 'НЕ ЗАДАН')
+    console.log('🔑 Password:', this.password ? `${this.password.substring(0, 3)}***` : 'НЕ ЗАДАН')
+    console.log('🌐 SOAP11 URL:', this.soap11Url)
+    
+    if (!this.login || !this.password) {
+      console.error('❌ Учетные данные для Doc модуля не настроены!')
+    }
+  }
+
+  /**
+   * Создает HMAC контрольный код для авторизации
+   */
+  private createHMAC(command: string): string {
+    if (!this.password) {
+      throw new Error('Doc password is required for HMAC generation')
+    }
+    
+    const combinedString = command + this.password
+    return createHash('md5').update(combinedString).digest('hex')
+  }
+
+  /**
+   * Создает SOAP 1.1 конверт
+   */
+  private createSOAP11Envelope(command: string, login: string, hmac: string): string {
+    return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" 
+               xmlns:ns="http://Aftermarket.Kito.ec">
+  <soap:Body>
+    <ns:QueryDataLogin>
+      <ns:request>${command}</ns:request>
+      <ns:login>${login}</ns:login>
+      <ns:hmac>${hmac}</ns:hmac>
+    </ns:QueryDataLogin>
+  </soap:Body>
+</soap:Envelope>`
+  }
+
+  /**
+   * Выполняет SOAP запрос
+   */
+  private async makeSOAPRequest(url: string, soapEnvelope: string, soapAction: string): Promise<string> {
+    try {
+      console.log('🌐 Doc SOAP Request URL:', url)
+      console.log('📋 Doc SOAP Action:', soapAction)
+      console.log('📄 Doc SOAP Envelope (first 500 chars):', soapEnvelope.substring(0, 500))
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml; charset=utf-8',
+          'SOAPAction': soapAction
+        },
+        body: soapEnvelope
+      })
+
+      console.log('📡 Doc Response Status:', response.status)
+      console.log('📡 Doc Response Headers:', Object.fromEntries(response.headers.entries()))
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.log('❌ Doc Error Response Body:', errorText)
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const responseText = await response.text()
+      console.log('✅ Doc Response received, length:', responseText.length)
+      console.log('📄 Doc Response (first 1000 chars):', responseText.substring(0, 1000))
+      
+      return responseText
+    } catch (error) {
+      console.error('SOAP request failed:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Поиск деталей по артикулу через Doc: findOem
+   */
+  async findOEM(oemNumber: string, brand?: string, replacementTypes?: string): Promise<LaximoDocFindOEMResult | null> {
+    try {
+      console.log('🔍 Doc: findOem поиск по артикулу:', oemNumber)
+      
+      // Команда для Doc модуля согласно документации
+      let command = `FindOEM:Locale=ru_RU|OEM=${oemNumber}|Options=crosses`
+      
+      if (brand) {
+        command += `|Brand=${brand}`
+      }
+      
+      if (replacementTypes) {
+        command += `|ReplacementTypes=${replacementTypes}`
+      }
+      
+      const hmac = this.createHMAC(command)
+      
+      console.log('📝 Doc findOem Command:', command)
+      console.log('🔗 HMAC:', hmac)
+      
+      const soapEnvelope = this.createSOAP11Envelope(command, this.login, hmac)
+      const xmlText = await this.makeSOAPRequest(this.soap11Url, soapEnvelope, 'urn:QueryDataLogin')
+      
+      return this.parseFindOEMResponse(xmlText)
+    } catch (error) {
+      console.error('Ошибка Doc findOem:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Парсит ответ findOem
+   */
+  private parseFindOEMResponse(xmlText: string): LaximoDocFindOEMResult | null {
+    try {
+      console.log('📄 Парсинг ответа Doc findOem...')
+      
+      // Извлекаем данные из SOAP ответа
+      const resultMatch = xmlText.match(/<ns:return[^>]*>([\s\S]*?)<\/ns:return>/) || 
+                         xmlText.match(/<return[^>]*>([\s\S]*?)<\/return>/)
+      if (!resultMatch) {
+        console.log('❌ Не найден return в ответе')
+        return null
+      }
+
+      let resultData = resultMatch[1]
+      
+      // Декодируем HTML entities если данные экранированы
+      resultData = resultData
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+
+      console.log('📋 Данные результата (первые 1000 символов):', resultData.substring(0, 1000))
+      console.log('📋 Полные данные результата:', resultData)
+
+      // Ищем блок FindOEM
+      const findOemMatch = resultData.match(/<FindOEM>([\s\S]*?)<\/FindOEM>/) ||
+                          resultData.match(/<findOem>([\s\S]*?)<\/findOem>/) ||
+                          resultData.match(/<response>([\s\S]*?)<\/response>/)
+      if (!findOemMatch) {
+        console.log('❌ Не найден блок FindOEM в ответе')
+        return null
+      }
+
+      const findOemData = findOemMatch[1]
+      
+      // Парсим детали
+      const details: LaximoDocDetail[] = []
+      const detailPattern = /<detail([^>]*)>(.*?)<\/detail>/g
+      let detailMatch
+      
+      while ((detailMatch = detailPattern.exec(findOemData)) !== null) {
+        const detailAttrs = detailMatch[1]
+        const detailContent = detailMatch[2]
+        
+        const getAttribute = (name: string): string => {
+          const match = detailAttrs.match(new RegExp(`${name}="([^"]*)"`, 'i'))
+          return match ? match[1] : ''
+        }
+        
+        // Парсим замены
+        const replacements: LaximoDocReplacement[] = []
+        const replacementPattern = /<replacement([^>]*)>(.*?)<\/replacement>/g
+        let replMatch
+        
+        while ((replMatch = replacementPattern.exec(detailContent)) !== null) {
+          const replAttrs = replMatch[1]
+          const replContent = replMatch[2]
+          
+          const getReplAttr = (name: string): string => {
+            const match = replAttrs.match(new RegExp(`${name}="([^"]*)"`, 'i'))
+            return match ? match[1] : ''
+          }
+          
+          // Парсим деталь замены
+          const replDetailMatch = replContent.match(/<detail([^>]*)/)
+          let replDetail: LaximoDocReplacementDetail = {
+            detailid: '',
+            formattedoem: '',
+            manufacturer: '',
+            manufacturerid: '',
+            name: '',
+            oem: ''
+          }
+          
+          if (replDetailMatch) {
+            const replDetailAttrs = replDetailMatch[1]
+            const getReplDetailAttr = (name: string): string => {
+              const match = replDetailAttrs.match(new RegExp(`${name}="([^"]*)"`, 'i'))
+              return match ? match[1] : ''
+            }
+            
+            replDetail = {
+              detailid: getReplDetailAttr('detailid'),
+              formattedoem: getReplDetailAttr('formattedoem'),
+              manufacturer: getReplDetailAttr('manufacturer'),
+              manufacturerid: getReplDetailAttr('manufacturerid'),
+              name: getReplDetailAttr('name'),
+              oem: getReplDetailAttr('oem'),
+              weight: getReplDetailAttr('weight'),
+              icon: getReplDetailAttr('icon')
+            }
+          }
+          
+          replacements.push({
+            type: getReplAttr('type'),
+            way: getReplAttr('way'),
+            replacementid: getReplAttr('replacementid'),
+            rate: getReplAttr('rate'),
+            detail: replDetail
+          })
+        }
+        
+        const detail: LaximoDocDetail = {
+          detailid: getAttribute('detailid'),
+          formattedoem: getAttribute('formattedoem'),
+          manufacturer: getAttribute('manufacturer'),
+          manufacturerid: getAttribute('manufacturerid'),
+          name: getAttribute('name'),
+          oem: getAttribute('oem'),
+          volume: getAttribute('volume'),
+          weight: getAttribute('weight'),
+          replacements
+        }
+        
+        details.push(detail)
+        console.log('🔩 Найдена деталь:', { 
+          oem: detail.oem, 
+          name: detail.name, 
+          manufacturer: detail.manufacturer,
+          replacements: detail.replacements.length
+        })
+      }
+      
+      console.log('✅ Всего найдено деталей:', details.length)
+      
+      return {
+        details
+      }
+    } catch (error) {
+      console.error('Ошибка парсинга findOem ответа:', error)
+      return null
+    }
+  }
+}
 
 /**
  * Laximo SOAP API Service для интеграции с каталогом автозапчастей
@@ -194,16 +520,16 @@ export interface LaximoFulltextDetail {
  */
 class LaximoService {
   // Актуальные endpoints согласно WSDL схеме
-  private soap11Url = 'https://ws.laximo.ru/ec.Kito.WebCatalog/services/Catalog.CatalogHttpSoap11Endpoint/'
-  private soap12Url = 'https://ws.laximo.ru/ec.Kito.WebCatalog/services/Catalog.CatalogHttpSoap12Endpoint/'
-  private login = process.env.LAXIMO_LOGIN || ''
-  private password = process.env.LAXIMO_PASSWORD || ''
+  protected soap11Url = 'https://ws.laximo.ru/ec.Kito.WebCatalog/services/Catalog.CatalogHttpSoap11Endpoint/'
+  protected soap12Url = 'https://ws.laximo.ru/ec.Kito.WebCatalog/services/Catalog.CatalogHttpSoap12Endpoint/'
+  protected login = process.env.LAXIMO_LOGIN || ''
+  protected password = process.env.LAXIMO_PASSWORD || ''
 
   /**
    * Создает HMAC контрольный код для авторизации
    * Формула: MD5(команда + пароль)
    */
-  private createHMAC(command: string): string {
+  protected createHMAC(command: string): string {
     if (!this.password) {
       throw new Error('Password is required for HMAC generation')
     }
@@ -215,7 +541,7 @@ class LaximoService {
   /**
    * Создает SOAP 1.1 конверт согласно WSDL схеме
    */
-  private createSOAP11Envelope(command: string, login: string, hmac: string): string {
+  protected createSOAP11Envelope(command: string, login: string, hmac: string): string {
     return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" 
                xmlns:ns="http://WebCatalog.Kito.ec">
@@ -716,17 +1042,21 @@ class LaximoService {
   /**
    * Получает список узлов каталога (альтернатива для групп быстрого поиска)
    */
-  async getListUnits(catalogCode: string, vehicleId?: string, ssd?: string): Promise<LaximoQuickGroup[]> {
+  async getListUnits(catalogCode: string, vehicleId?: string, ssd?: string, categoryId?: string): Promise<LaximoQuickGroup[]> {
     try {
       console.log('🔍 Получаем узлы каталога для автомобиля:', vehicleId || 'общие')
+      console.log('📋 Параметры:', { vehicleId, categoryId, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
       
-      // Формируем команду в зависимости от наличия vehicleId и SSD
+      // Формируем команду в зависимости от наличия vehicleId, SSD и categoryId
       let command = `ListUnits:Locale=ru_RU|Catalog=${catalogCode}`
       if (vehicleId) {
         command += `|VehicleId=${vehicleId}`
       }
       if (ssd && ssd.trim() !== '') {
         command += `|ssd=${ssd}`
+      }
+      if (categoryId) {
+        command += `|CategoryId=${categoryId}`
       }
       
       const hmac = this.createHMAC(command)
@@ -802,8 +1132,11 @@ class LaximoService {
       console.log('🔍 Получаем категории каталога:', catalogCode)
       console.log('📋 Параметры:', { vehicleId, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
       
-      // Формируем команду в зависимости от наличия vehicleId и SSD
-      let command = `ListCategories:Locale=ru_RU|Catalog=${catalogCode}`
+      // Формируем команду согласно документации Laximo
+      // CategoryId=-1 необходим для получения полного списка категорий
+      let command = `ListCategories:Locale=ru_RU|Catalog=${catalogCode}|CategoryId=-1`
+      
+      // Добавляем VehicleId и ssd если они предоставлены
       if (vehicleId) {
         command += `|VehicleId=${vehicleId}`
       }
@@ -844,6 +1177,7 @@ class LaximoService {
     
     if (!categoriesMatch) {
       console.log('❌ Не найдена секция ListCategories')
+      console.log('📋 Доступные данные результата (первые 500 символов):', resultData.substring(0, 500))
       return []
     }
 
@@ -855,19 +1189,22 @@ class LaximoService {
       const attributes = match[1]
       const content = match[2] || ''
       
-      // Извлекаем атрибуты
-      const categoryid = this.extractAttribute(attributes, 'categoryid') || this.extractAttribute(attributes, 'id')
-      const name = this.extractAttribute(attributes, 'name') || this.extractAttribute(attributes, 'description')
-      const hasunits = this.extractAttribute(attributes, 'hasunits') === 'true'
+      // Извлекаем атрибуты согласно документации Laximo
+      const categoryid = this.extractAttribute(attributes, 'categoryid')
+      const name = this.extractAttribute(attributes, 'name')
+      const childrens = this.extractAttribute(attributes, 'childrens') === 'true'
+      const parentcategoryid = this.extractAttribute(attributes, 'parentcategoryid')
+      
+      console.log('🔍 Обрабатываем row:', { categoryid, name, childrens, parentcategoryid, attributes })
       
       if (categoryid && name) {
         const group: LaximoQuickGroup = {
           quickgroupid: categoryid,
           name: name,
-          link: hasunits
+          link: true // Для категорий всегда true, так как они могут содержать узлы
         }
         
-        console.log('📦 Найдена категория каталога:', { categoryid, name, hasunits })
+        console.log('📦 Найдена категория каталога:', { categoryid, name, childrens, parentcategoryid })
         groups.push(group)
       }
     }
@@ -947,7 +1284,7 @@ class LaximoService {
   /**
    * Базовый SOAP запрос без парсинга каталогов
    */
-  private async makeBasicSOAPRequest(url: string, soapEnvelope: string, soapAction: string): Promise<string> {
+  protected async makeBasicSOAPRequest(url: string, soapEnvelope: string, soapAction: string): Promise<string> {
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -1189,7 +1526,7 @@ class LaximoService {
   /**
    * Извлекает данные результата из XML
    */
-  private extractResultData(xmlText: string): string | null {
+  protected extractResultData(xmlText: string): string | null {
     console.log('🔍 Извлекаем данные результата из XML...')
     console.log('📄 XML длина:', xmlText.length)
     
@@ -1339,7 +1676,7 @@ class LaximoService {
   /**
    * Извлекает значение атрибута из строки атрибутов
    */
-  private extractAttribute(attributesString: string, attributeName: string): string {
+  protected extractAttribute(attributesString: string, attributeName: string): string {
     const regex = new RegExp(`${attributeName}="([^"]*)"`, 'i')
     const match = attributesString.match(regex)
     return match ? match[1] : ''
@@ -2046,15 +2383,14 @@ class LaximoService {
   }
 
   /**
-   * Поиск автомобиля по государственному номеру
+   * Поиск автомобиля по государственному номеру (в конкретном каталоге)
    * @see https://doc.laximo.ru/ru/cat/FindVehicleByPlateNumber
    */
   async findVehicleByPlateNumber(catalogCode: string, plateNumber: string): Promise<LaximoVehicleSearchResult[]> {
     try {
-      console.log('🔍 Поиск автомобиля по госномеру:', plateNumber)
-      console.log('📋 Каталог:', catalogCode)
+      console.log('🔍 Поиск автомобиля по госномеру в каталоге:', plateNumber, catalogCode)
       
-      const command = `FindVehicleByPlateNumber:Locale=ru_RU|Catalog=${catalogCode}|PlateNumber=${plateNumber}`
+      const command = `FindVehicleByPlateNumber:Locale=ru_RU|Catalog=${catalogCode}|PlateNumber=${plateNumber}|CountryCode=ru|Localized=true`
       const hmac = this.createHMAC(command)
       
       console.log('📝 FindVehicleByPlateNumber Command:', command)
@@ -2065,10 +2401,37 @@ class LaximoService {
       
       const vehicles = this.parseVehicleSearchResponse(xmlText)
       
-      console.log(`✅ Найдено ${vehicles.length} автомобилей по госномеру`)
+      console.log(`✅ Найдено ${vehicles.length} автомобилей по госномеру в каталоге ${catalogCode}`)
       return vehicles
     } catch (error) {
       console.error('❌ Ошибка поиска автомобиля по госномеру:', error)
+      return []
+    }
+  }
+
+  /**
+   * Глобальный поиск автомобиля по государственному номеру (без указания каталога)
+   * @see https://doc.laximo.ru/ru/cat/FindVehicleByPlateNumber
+   */
+  async findVehicleByPlateNumberGlobal(plateNumber: string): Promise<LaximoVehicleSearchResult[]> {
+    try {
+      console.log('🔍 Глобальный поиск автомобиля по госномеру:', plateNumber)
+      
+      const command = `FindVehicleByPlateNumber:Locale=ru_RU|PlateNumber=${plateNumber}|CountryCode=ru|Localized=true`
+      const hmac = this.createHMAC(command)
+      
+      console.log('📝 FindVehicleByPlateNumber Global Command:', command)
+      console.log('🔗 HMAC:', hmac)
+      
+      const soapEnvelope = this.createSOAP11Envelope(command, this.login, hmac)
+      const xmlText = await this.makeBasicSOAPRequest(this.soap11Url, soapEnvelope, 'urn:QueryDataLogin')
+      
+      const vehicles = this.parseVehicleSearchResponse(xmlText)
+      
+      console.log(`✅ Найдено ${vehicles.length} автомобилей по госномеру глобально`)
+      return vehicles
+    } catch (error) {
+      console.error('❌ Ошибка глобального поиска автомобиля по госномеру:', error)
       return []
     }
   }
@@ -2127,6 +2490,80 @@ class LaximoService {
     }
   }
 
+    /**
+   * Комплексный поиск автомобилей по артикулу (двухэтапный процесс)
+   * 1. Поиск каталогов с артикулом через FindPartReferences
+   * 2. Поиск автомобилей в найденных каталогах через FindApplicableVehicles
+   * @see https://doc.laximo.ru/ru/UseCases/SearchString#поиск-автомобиля-по-артикулу
+   */
+  async findVehiclesByPartNumber(partNumber: string): Promise<LaximoVehiclesByPartResult> {
+    try {
+      console.log('🔍 Комплексный поиск автомобилей по артикулу:', partNumber)
+      
+      // Шаг 1: Поиск каталогов с артикулом
+      const catalogs = await this.findPartReferences(partNumber)
+      
+      if (catalogs.length === 0) {
+        console.log('❌ Каталоги с артикулом не найдены')
+        console.log('ℹ️ Возможно, это артикул производителя запчастей, а не оригинальный OEM номер')
+        return {
+          partNumber,
+          catalogs: [],
+          totalVehicles: 0
+        }
+      }
+      
+      console.log(`📦 Найдено ${catalogs.length} каталогов с артикулом`)
+      
+      // Шаг 2: Поиск автомобилей в каждом каталоге
+      const catalogResults: LaximoCatalogVehicleResult[] = []
+      
+      for (const catalogCode of catalogs) {
+        console.log(`🔍 Поиск автомобилей в каталоге: ${catalogCode}`)
+        
+        try {
+          const vehicles = await this.findApplicableVehicles(catalogCode, partNumber)
+          
+          if (vehicles.length > 0) {
+            // Получаем информацию о каталоге для отображения бренда
+            const catalogInfo = await this.getCatalogInfo(catalogCode)
+            
+            catalogResults.push({
+              catalogCode,
+              catalogName: catalogInfo?.name || catalogCode,
+              brand: catalogInfo?.brand || catalogCode,
+              vehicles,
+              vehicleCount: vehicles.length
+            })
+            
+            console.log(`✅ В каталоге ${catalogCode} найдено ${vehicles.length} автомобилей`)
+          } else {
+            console.log(`⚠️ В каталоге ${catalogCode} автомобили не найдены`)
+          }
+        } catch (error) {
+          console.error(`❌ Ошибка поиска в каталоге ${catalogCode}:`, error)
+        }
+      }
+      
+      const totalVehicles = catalogResults.reduce((sum, catalog) => sum + catalog.vehicleCount, 0)
+      
+      console.log(`✅ Общий результат: найдено ${totalVehicles} автомобилей в ${catalogResults.length} каталогах`)
+      
+      return {
+        partNumber,
+        catalogs: catalogResults,
+        totalVehicles
+      }
+    } catch (error) {
+      console.error('❌ Ошибка комплексного поиска автомобилей по артикулу:', error)
+      return {
+        partNumber,
+        catalogs: [],
+        totalVehicles: 0
+      }
+    }
+  }
+
   /**
    * Парсит ответ поиска каталогов по артикулу
    */
@@ -2139,21 +2576,21 @@ class LaximoService {
       return []
     }
 
+    console.log('📄 XML длина:', xmlText.length)
+    console.log('📋 Обработанный результат SOAP длина:', resultData.length)
+    console.log('📋 Первые 500 символов:', resultData.substring(0, 500))
+
     const catalogs: string[] = []
-    const rowPattern = /<row([^>]*?)(?:\s*\/>|>([\s\S]*?)<\/row>)/g
+    
+    // Ищем элементы CatalogReference с атрибутом code
+    const catalogPattern = /<CatalogReference[^>]*?code="([^"]*)"[^>]*?>/g
     let match
     
-    while ((match = rowPattern.exec(resultData)) !== null) {
-      const attributes = match[1]
-      
-      // Извлекаем код каталога
-      const catalogMatch = attributes.match(/catalog="([^"]*)"/)
-      if (catalogMatch) {
-        const catalogCode = catalogMatch[1]
-        if (!catalogs.includes(catalogCode)) {
-          catalogs.push(catalogCode)
-          console.log('📦 Найден каталог:', catalogCode)
-        }
+    while ((match = catalogPattern.exec(resultData)) !== null) {
+      const catalogCode = match[1]
+      if (catalogCode && !catalogs.includes(catalogCode)) {
+        catalogs.push(catalogCode)
+        console.log('📦 Найден каталог:', catalogCode)
       }
     }
     
@@ -2162,4 +2599,259 @@ class LaximoService {
   }
 }
 
-export const laximoService = new LaximoService() 
+export const laximoService = new LaximoService()
+export const laximoDocService = new LaximoDocService()
+
+// Добавляем методы для работы с деталями узлов
+export class LaximoUnitService extends LaximoService {
+  /**
+   * Получает информацию об узле
+   */
+  async getUnitInfo(catalogCode: string, vehicleId: string, unitId: string, ssd?: string): Promise<LaximoUnit | null> {
+    try {
+      console.log('🔍 Получаем информацию об узле:', unitId)
+      console.log('📋 Параметры:', { catalogCode, vehicleId, unitId, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
+      
+      // Используем ListUnits с фильтром по unitId для получения информации об узле
+      let command = `ListUnits:Locale=ru_RU|Catalog=${catalogCode}`
+      
+      if (vehicleId) {
+        command += `|VehicleId=${vehicleId}`
+      }
+      if (ssd && ssd.trim() !== '') {
+        command += `|ssd=${ssd}`
+      }
+      
+      const hmac = this.createHMAC(command)
+      
+      console.log('📝 GetUnitInfo Command:', command)
+      console.log('🔗 HMAC:', hmac)
+      
+      const soapEnvelope = this.createSOAP11Envelope(command, this.login, hmac)
+      const xmlText = await this.makeBasicSOAPRequest(this.soap11Url, soapEnvelope, 'urn:QueryDataLogin')
+      
+      return this.parseUnitInfoResponse(xmlText, unitId)
+    } catch (error) {
+      console.error('Ошибка получения информации об узле:', error)
+      return null
+    }
+  }
+
+  /**
+   * Получает детали узла (временная заглушка - возвращает пустой массив)
+   */
+  async getUnitDetails(catalogCode: string, vehicleId: string, unitId: string, ssd?: string): Promise<LaximoDetail[]> {
+    try {
+      console.log('🔍 Получаем детали узла (заглушка):', unitId)
+      console.log('📋 Параметры:', { catalogCode, vehicleId, unitId, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
+      
+      // Временная заглушка - возвращаем пустой массив
+      // TODO: Реализовать правильную команду Laximo API для получения деталей узла
+      console.log('⚠️ Временная заглушка - детали узла не загружаются')
+      
+      return []
+    } catch (error) {
+      console.error('Ошибка получения деталей узла:', error)
+      return []
+    }
+  }
+
+  /**
+   * Получает карту изображений узла с координатами (временная заглушка)
+   */
+  async getUnitImageMap(catalogCode: string, vehicleId: string, unitId: string, ssd?: string): Promise<LaximoUnitImageMap | null> {
+    try {
+      console.log('🔍 Получаем карту изображений узла (заглушка):', unitId)
+      console.log('📋 Параметры:', { catalogCode, vehicleId, unitId, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
+      
+      // Временная заглушка - возвращаем null
+      // TODO: Реализовать правильную команду Laximo API для получения карты изображений
+      console.log('⚠️ Временная заглушка - карта изображений не загружается')
+      
+      return null
+    } catch (error) {
+      console.error('Ошибка получения карты изображений узла:', error)
+      return null
+    }
+  }
+
+  /**
+   * Парсит ответ с информацией об узле
+   */
+  private parseUnitInfoResponse(xmlText: string, unitId: string): LaximoUnit | null {
+    console.log('🔍 Парсим информацию об узле...')
+    
+    const resultData = this.extractResultData(xmlText)
+    if (!resultData) {
+      console.log('❌ Не удалось извлечь данные результата')
+      return null
+    }
+
+    // Ищем секцию ListUnits
+    const unitsMatch = resultData.match(/<ListUnits?[^>]*>([\s\S]*?)<\/ListUnits?>/) ||
+                       resultData.match(/<response[^>]*>([\s\S]*?)<\/response>/)
+    
+    if (!unitsMatch) {
+      console.log('❌ Не найдена секция ListUnits')
+      return null
+    }
+
+    const rowPattern = /<row([^>]*?)(?:\s*\/>|>([\s\S]*?)<\/row>)/g
+    let match
+    
+    while ((match = rowPattern.exec(unitsMatch[1])) !== null) {
+      const attributes = match[1]
+      const content = match[2] || ''
+      
+      // Извлекаем атрибуты
+      const currentUnitId = this.extractAttribute(attributes, 'unitid') || this.extractAttribute(attributes, 'id')
+      
+      if (currentUnitId === unitId) {
+        const name = this.extractAttribute(attributes, 'name') || this.extractAttribute(attributes, 'description')
+        const code = this.extractAttribute(attributes, 'code')
+        const imageurl = this.extractAttribute(attributes, 'imageurl')
+        const largeimageurl = this.extractAttribute(attributes, 'largeimageurl')
+        const note = this.extractAttribute(attributes, 'note')
+        
+        console.log('📦 Найдена информация об узле:', { unitId: currentUnitId, name, code })
+        
+        return {
+          unitid: currentUnitId,
+          name: name || '',
+          code: code || '',
+          description: note || '',
+          details: [] // Детали загружаются отдельно
+        }
+      }
+    }
+    
+    console.log('❌ Узел не найден:', unitId)
+    return null
+  }
+
+  /**
+   * Парсит ответ с деталями узла
+   */
+  private parseUnitDetailsResponse(xmlText: string): LaximoDetail[] {
+    console.log('🔍 Парсим детали узла...')
+    
+    const resultData = this.extractResultData(xmlText)
+    if (!resultData) {
+      console.log('❌ Не удалось извлечь данные результата')
+      return []
+    }
+
+    // Ищем секцию ListDetails
+    const detailsMatch = resultData.match(/<ListDetails?[^>]*>([\s\S]*?)<\/ListDetails?>/) ||
+                        resultData.match(/<response[^>]*>([\s\S]*?)<\/response>/)
+    
+    if (!detailsMatch) {
+      console.log('❌ Не найдена секция ListDetails')
+      return []
+    }
+
+    const details: LaximoDetail[] = []
+    const rowPattern = /<row([^>]*?)(?:\s*\/>|>([\s\S]*?)<\/row>)/g
+    let match
+    
+    while ((match = rowPattern.exec(detailsMatch[1])) !== null) {
+      const attributes = match[1]
+      const content = match[2] || ''
+      
+      // Извлекаем атрибуты детали
+      const detailid = this.extractAttribute(attributes, 'detailid') || this.extractAttribute(attributes, 'id')
+      const name = this.extractAttribute(attributes, 'name') || this.extractAttribute(attributes, 'description')
+      const oem = this.extractAttribute(attributes, 'oem') || this.extractAttribute(attributes, 'partnumber')
+      const brand = this.extractAttribute(attributes, 'brand') || this.extractAttribute(attributes, 'manufacturer')
+      const description = this.extractAttribute(attributes, 'description') || this.extractAttribute(attributes, 'note')
+      const applicablemodels = this.extractAttribute(attributes, 'applicablemodels')
+      const note = this.extractAttribute(attributes, 'note')
+      
+      if (detailid && name && oem) {
+        const detail: LaximoDetail = {
+          detailid,
+          name,
+          oem,
+          brand: brand || '',
+          description: description || '',
+          applicablemodels: applicablemodels || '',
+          note: note || ''
+        }
+        
+        console.log('📦 Найдена деталь узла:', { detailid, name, oem, brand })
+        details.push(detail)
+      }
+    }
+    
+    console.log(`✅ Обработано ${details.length} деталей узла`)
+    return details
+  }
+
+  /**
+   * Парсит ответ с картой изображений узла
+   */
+  private parseUnitImageMapResponse(xmlText: string, unitId: string): LaximoUnitImageMap | null {
+    console.log('🔍 Парсим карту изображений узла...')
+    
+    const resultData = this.extractResultData(xmlText)
+    if (!resultData) {
+      console.log('❌ Не удалось извлечь данные результата')
+      return null
+    }
+
+    // Ищем секцию GetImageMap
+    const imageMapMatch = resultData.match(/<GetImageMap?[^>]*>([\s\S]*?)<\/GetImageMap?>/) ||
+                         resultData.match(/<response[^>]*>([\s\S]*?)<\/response>/)
+    
+    if (!imageMapMatch) {
+      console.log('❌ Не найдена секция GetImageMap')
+      return null
+    }
+
+    // Извлекаем основную информацию об изображении
+    const imageurl = this.extractAttribute(imageMapMatch[1], 'imageurl') || ''
+    const largeimageurl = this.extractAttribute(imageMapMatch[1], 'largeimageurl') || imageurl
+    
+    const coordinates: LaximoImageCoordinate[] = []
+    const coordPattern = /<coordinate([^>]*?)(?:\s*\/>|>([\s\S]*?)<\/coordinate>)/g
+    let match
+    
+    while ((match = coordPattern.exec(imageMapMatch[1])) !== null) {
+      const attributes = match[1]
+      
+      const detailid = this.extractAttribute(attributes, 'detailid')
+      const codeonimage = this.extractAttribute(attributes, 'codeonimage')
+      const x = parseInt(this.extractAttribute(attributes, 'x') || '0')
+      const y = parseInt(this.extractAttribute(attributes, 'y') || '0')
+      const width = parseInt(this.extractAttribute(attributes, 'width') || '0')
+      const height = parseInt(this.extractAttribute(attributes, 'height') || '0')
+      const shape = this.extractAttribute(attributes, 'shape') || 'rect'
+      
+      if (detailid && codeonimage) {
+        coordinates.push({
+          detailid,
+          codeonimage,
+          x,
+          y,
+          width,
+          height,
+          shape
+        })
+        
+        console.log('📦 Найдена координата:', { detailid, codeonimage, x, y })
+      }
+    }
+    
+    console.log(`✅ Обработано ${coordinates.length} координат изображения`)
+    
+    return {
+      unitid: unitId,
+      imageurl,
+      largeimageurl,
+      coordinates
+    }
+  }
+}
+
+// Создаем экземпляр расширенного сервиса
+export const laximoUnitService = new LaximoUnitService() 

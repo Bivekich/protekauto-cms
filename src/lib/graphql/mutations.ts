@@ -942,4 +942,109 @@ export const REGISTER_NEW_CLIENT = gql`
       token
     }
   }
+`
+
+// Мутации для заказов и платежей
+export const CREATE_ORDER = gql`
+  mutation CreateOrder($input: CreateOrderInput!) {
+    createOrder(input: $input) {
+      id
+      orderNumber
+      clientId
+      client {
+        id
+        name
+        email
+        phone
+      }
+      clientEmail
+      clientPhone
+      clientName
+      status
+      totalAmount
+      discountAmount
+      finalAmount
+      currency
+      items {
+        id
+        productId
+        product {
+          id
+          name
+          article
+        }
+        externalId
+        name
+        article
+        brand
+        price
+        quantity
+        totalPrice
+      }
+      payments {
+        id
+        yookassaPaymentId
+        status
+        amount
+        confirmationUrl
+      }
+      deliveryAddress
+      comment
+      createdAt
+      updatedAt
+    }
+  }
+`
+
+export const UPDATE_ORDER_STATUS = gql`
+  mutation UpdateOrderStatus($id: ID!, $status: OrderStatus!) {
+    updateOrderStatus(id: $id, status: $status) {
+      id
+      orderNumber
+      status
+      updatedAt
+    }
+  }
+`
+
+export const CANCEL_ORDER = gql`
+  mutation CancelOrder($id: ID!) {
+    cancelOrder(id: $id) {
+      id
+      orderNumber
+      status
+      updatedAt
+    }
+  }
+`
+
+export const CREATE_PAYMENT = gql`
+  mutation CreatePayment($input: CreatePaymentInput!) {
+    createPayment(input: $input) {
+      payment {
+        id
+        orderId
+        yookassaPaymentId
+        status
+        amount
+        currency
+        description
+        confirmationUrl
+        createdAt
+      }
+      confirmationUrl
+    }
+  }
+`
+
+export const CANCEL_PAYMENT = gql`
+  mutation CancelPayment($id: ID!) {
+    cancelPayment(id: $id) {
+      id
+      yookassaPaymentId
+      status
+      canceledAt
+      updatedAt
+    }
+  }
 ` 

@@ -981,4 +981,251 @@ export const GET_USERS_FOR_MANAGER = gql`
   }
 `
 
+// Запросы для заказов и платежей
+export const GET_ORDERS = gql`
+  query GetOrders($clientId: String, $status: OrderStatus, $limit: Int, $offset: Int) {
+    orders(clientId: $clientId, status: $status, limit: $limit, offset: $offset) {
+      id
+      orderNumber
+      clientId
+      client {
+        id
+        name
+        email
+        phone
+      }
+      clientEmail
+      clientPhone
+      clientName
+      status
+      totalAmount
+      discountAmount
+      finalAmount
+      currency
+      items {
+        id
+        productId
+        product {
+          id
+          name
+          article
+        }
+        externalId
+        name
+        article
+        brand
+        price
+        quantity
+        totalPrice
+      }
+      payments {
+        id
+        yookassaPaymentId
+        status
+        amount
+        confirmationUrl
+      }
+      deliveryAddress
+      comment
+      createdAt
+      updatedAt
+    }
+  }
+`
+
+export const GET_ORDER = gql`
+  query GetOrder($id: ID!) {
+    order(id: $id) {
+      id
+      orderNumber
+      clientId
+      client {
+        id
+        name
+        email
+        phone
+      }
+      clientEmail
+      clientPhone
+      clientName
+      status
+      totalAmount
+      discountAmount
+      finalAmount
+      currency
+      items {
+        id
+        productId
+        product {
+          id
+          name
+          article
+          images {
+            id
+            url
+            alt
+          }
+        }
+        externalId
+        name
+        article
+        brand
+        price
+        quantity
+        totalPrice
+      }
+      payments {
+        id
+        yookassaPaymentId
+        status
+        amount
+        currency
+        paymentMethod
+        description
+        confirmationUrl
+        createdAt
+        updatedAt
+        paidAt
+        canceledAt
+      }
+      deliveryAddress
+      comment
+      createdAt
+      updatedAt
+    }
+  }
+`
+
+export const GET_ORDER_BY_NUMBER = gql`
+  query GetOrderByNumber($orderNumber: String!) {
+    orderByNumber(orderNumber: $orderNumber) {
+      id
+      orderNumber
+      clientId
+      client {
+        id
+        name
+        email
+        phone
+      }
+      clientEmail
+      clientPhone
+      clientName
+      status
+      totalAmount
+      discountAmount
+      finalAmount
+      currency
+      items {
+        id
+        productId
+        product {
+          id
+          name
+          article
+          images {
+            id
+            url
+            alt
+          }
+        }
+        externalId
+        name
+        article
+        brand
+        price
+        quantity
+        totalPrice
+      }
+      payments {
+        id
+        yookassaPaymentId
+        status
+        amount
+        currency
+        paymentMethod
+        description
+        confirmationUrl
+        createdAt
+        updatedAt
+        paidAt
+        canceledAt
+      }
+      deliveryAddress
+      comment
+      createdAt
+      updatedAt
+    }
+  }
+`
+
+export const GET_PAYMENTS = gql`
+  query GetPayments($orderId: String, $status: PaymentStatus) {
+    payments(orderId: $orderId, status: $status) {
+      id
+      orderId
+      order {
+        id
+        orderNumber
+        client {
+          id
+          name
+        }
+        totalAmount
+      }
+      yookassaPaymentId
+      status
+      amount
+      currency
+      paymentMethod
+      description
+      confirmationUrl
+      createdAt
+      updatedAt
+      paidAt
+      canceledAt
+    }
+  }
+`
+
+export const GET_PAYMENT = gql`
+  query GetPayment($id: ID!) {
+    payment(id: $id) {
+      id
+      orderId
+      order {
+        id
+        orderNumber
+        client {
+          id
+          name
+          email
+          phone
+        }
+        totalAmount
+        items {
+          id
+          name
+          article
+          brand
+          price
+          quantity
+          totalPrice
+        }
+      }
+      yookassaPaymentId
+      status
+      amount
+      currency
+      paymentMethod
+      description
+      confirmationUrl
+      createdAt
+      updatedAt
+      paidAt
+      canceledAt
+    }
+  }
+`
+
  

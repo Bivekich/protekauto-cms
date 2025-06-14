@@ -814,15 +814,33 @@ export const typeDefs = gql`
     laximoFindVehicle(catalogCode: String!, vin: String!): [LaximoVehicleSearchResult!]!
     laximoFindVehicleByWizard(catalogCode: String!, ssd: String!): [LaximoVehicleSearchResult!]!
     laximoFindVehicleByPlate(catalogCode: String!, plateNumber: String!): [LaximoVehicleSearchResult!]!
+    laximoFindVehicleByPlateGlobal(plateNumber: String!): [LaximoVehicleSearchResult!]!
     laximoFindPartReferences(partNumber: String!): [String!]!
     laximoFindApplicableVehicles(catalogCode: String!, partNumber: String!): [LaximoVehicleSearchResult!]!
+    laximoFindVehiclesByPartNumber(partNumber: String!): LaximoVehiclesByPartResult!
     laximoVehicleInfo(catalogCode: String!, vehicleId: String!, ssd: String, localized: Boolean!): LaximoVehicleInfo
     laximoQuickGroups(catalogCode: String!, vehicleId: String, ssd: String): [LaximoQuickGroup!]!
     laximoCategories(catalogCode: String!, vehicleId: String, ssd: String): [LaximoQuickGroup!]!
-    laximoUnits(catalogCode: String!, vehicleId: String, ssd: String): [LaximoQuickGroup!]!
+    laximoUnits(catalogCode: String!, vehicleId: String, ssd: String, categoryId: String): [LaximoQuickGroup!]!
     laximoQuickDetail(catalogCode: String!, vehicleId: String!, quickGroupId: String!, ssd: String!): LaximoQuickDetail
     laximoOEMSearch(catalogCode: String!, vehicleId: String!, oemNumber: String!, ssd: String!): LaximoOEMResult
     laximoFulltextSearch(catalogCode: String!, vehicleId: String!, searchQuery: String!, ssd: String!): LaximoFulltextSearchResult
+    laximoDocFindOEM(oemNumber: String!, brand: String, replacementTypes: String): LaximoDocFindOEMResult
+    
+    # Запросы для работы с деталями узлов
+    laximoUnitInfo(catalogCode: String!, vehicleId: String!, unitId: String!, ssd: String!): LaximoUnitInfo
+    laximoUnitDetails(catalogCode: String!, vehicleId: String!, unitId: String!, ssd: String!): [LaximoUnitDetail!]!
+    laximoUnitImageMap(catalogCode: String!, vehicleId: String!, unitId: String!, ssd: String!): LaximoUnitImageMap
+    
+    # Поиск товаров и предложений
+    searchProductOffers(articleNumber: String!, brand: String): ProductOffersResult!
+    
+    # Заказы и платежи
+    orders(clientId: String, status: OrderStatus, limit: Int, offset: Int): [Order!]!
+    order(id: ID!): Order
+    orderByNumber(orderNumber: String!): Order
+    payments(orderId: String, status: PaymentStatus): [Payment!]!
+    payment(id: ID!): Payment
   }
 
   type AuthPayload {
@@ -966,6 +984,13 @@ export const typeDefs = gql`
     
     # Создание юр. лица для авторизованного клиента
     createClientLegalEntityMe(input: ClientLegalEntityInput!): ClientLegalEntity!
+    
+    # Заказы и платежи
+    createOrder(input: CreateOrderInput!): Order!
+    updateOrderStatus(id: ID!, status: OrderStatus!): Order!
+    cancelOrder(id: ID!): Order!
+    createPayment(input: CreatePaymentInput!): CreatePaymentResult!
+    cancelPayment(id: ID!): Payment!
   }
 
   input LoginInput {
@@ -1199,6 +1224,100 @@ export const typeDefs = gql`
     description: String
   }
 
+  # Типы для Doc FindOEM
+  type LaximoDocFindOEMResult {
+    details: [LaximoDocDetail!]!
+  }
+
+  type LaximoDocDetail {
+    detailid: String!
+    formattedoem: String!
+    manufacturer: String!
+    manufacturerid: String!
+    name: String!
+    oem: String!
+    volume: String
+    weight: String
+    replacements: [LaximoDocReplacement!]!
+  }
+
+  type LaximoDocReplacement {
+    type: String!
+    way: String!
+    replacementid: String!
+    rate: String
+    detail: LaximoDocReplacementDetail!
+  }
+
+  type LaximoDocReplacementDetail {
+    detailid: String!
+    formattedoem: String!
+    manufacturer: String!
+    manufacturerid: String!
+    name: String!
+    oem: String!
+    weight: String
+    icon: String
+  }
+
+  type LaximoCatalogVehicleResult {
+    catalogCode: String!
+    catalogName: String!
+    brand: String!
+    vehicles: [LaximoVehicleSearchResult!]!
+    vehicleCount: Int!
+  }
+
+  type LaximoVehiclesByPartResult {
+    partNumber: String!
+    catalogs: [LaximoCatalogVehicleResult!]!
+    totalVehicles: Int!
+  }
+
+  # Типы для работы с деталями узлов
+  type LaximoUnitInfo {
+    unitid: String!
+    name: String!
+    code: String
+    description: String
+    imageurl: String
+    largeimageurl: String
+    attributes: [LaximoVehicleAttribute!]
+  }
+
+  type LaximoUnitDetail {
+    detailid: String!
+    name: String!
+    oem: String
+    brand: String
+    codeonimage: String
+    code: String
+    note: String
+    filter: String
+    price: String
+    availability: String
+    description: String
+    applicablemodels: String
+    attributes: [LaximoVehicleAttribute!]
+  }
+
+  type LaximoUnitImageMap {
+    unitid: String!
+    imageurl: String
+    largeimageurl: String
+    coordinates: [LaximoImageCoordinate!]!
+  }
+
+  type LaximoImageCoordinate {
+    detailid: String!
+    codeonimage: String
+    x: Int!
+    y: Int!
+    width: Int!
+    height: Int!
+    shape: String!
+  }
+
   # Типы для импорта товаров
   input ImportProductsInput {
     file: String!
@@ -1231,5 +1350,162 @@ export const typeDefs = gql`
     weight: String
     dimensions: String
     category: String
+  }
+
+  # Типы для поиска товаров и предложений
+  type ProductOffersResult {
+    articleNumber: String!
+    brand: String!
+    name: String!
+    internalOffers: [InternalOffer!]!
+    externalOffers: [ExternalOffer!]!
+    analogs: [AnalogProduct!]!
+    hasInternalStock: Boolean!
+    totalOffers: Int!
+  }
+
+  type InternalOffer {
+    id: ID!
+    productId: ID!
+    price: Float!
+    quantity: Int!
+    warehouse: String!
+    deliveryDays: Int!
+    available: Boolean!
+    rating: Float
+    supplier: String!
+  }
+
+  type ExternalOffer {
+    offerKey: String!
+    brand: String!
+    code: String!
+    name: String!
+    price: Float!
+    currency: String!
+    deliveryTime: Int!
+    deliveryTimeMax: Int!
+    quantity: Int!
+    warehouse: String!
+    supplier: String!
+    comment: String
+    weight: Float
+    volume: Float
+    canPurchase: Boolean!
+  }
+
+  type AnalogProduct {
+    brand: String!
+    articleNumber: String!
+    name: String!
+    type: String
+    internalOffers: [InternalOffer!]!
+    externalOffers: [ExternalOffer!]!
+  }
+
+  # Типы для заказов и платежей
+  enum OrderStatus {
+    PENDING
+    PAID
+    PROCESSING
+    SHIPPED
+    DELIVERED
+    CANCELED
+    REFUNDED
+  }
+
+  enum PaymentStatus {
+    PENDING
+    WAITING_FOR_CAPTURE
+    SUCCEEDED
+    CANCELED
+    REFUNDED
+  }
+
+  type Order {
+    id: ID!
+    orderNumber: String!
+    clientId: String
+    client: Client
+    clientEmail: String
+    clientPhone: String
+    clientName: String
+    status: OrderStatus!
+    totalAmount: Float!
+    discountAmount: Float!
+    finalAmount: Float!
+    currency: String!
+    items: [OrderItem!]!
+    payments: [Payment!]!
+    deliveryAddress: String
+    comment: String
+    createdAt: DateTime!
+    updatedAt: DateTime!
+  }
+
+  type OrderItem {
+    id: ID!
+    orderId: String!
+    productId: String
+    product: Product
+    externalId: String
+    name: String!
+    article: String
+    brand: String
+    price: Float!
+    quantity: Int!
+    totalPrice: Float!
+    createdAt: DateTime!
+  }
+
+  type Payment {
+    id: ID!
+    orderId: String!
+    order: Order!
+    yookassaPaymentId: String!
+    status: PaymentStatus!
+    amount: Float!
+    currency: String!
+    paymentMethod: String
+    description: String
+    confirmationUrl: String
+    createdAt: DateTime!
+    updatedAt: DateTime!
+    paidAt: DateTime
+    canceledAt: DateTime
+  }
+
+  # Входные типы для создания заказа
+  input CreateOrderInput {
+    clientId: String
+    clientEmail: String
+    clientPhone: String
+    clientName: String
+    items: [OrderItemInput!]!
+    deliveryAddress: String
+    comment: String
+  }
+
+  input OrderItemInput {
+    productId: String
+    externalId: String
+    name: String!
+    article: String
+    brand: String
+    price: Float!
+    quantity: Int!
+  }
+
+  # Входные типы для создания платежа
+  input CreatePaymentInput {
+    orderId: String!
+    returnUrl: String!
+    description: String
+  }
+
+  # Результат создания платежа
+  type CreatePaymentResult {
+    payment: Payment!
+    confirmationUrl: String!
   }
 ` 
