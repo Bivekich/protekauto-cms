@@ -836,7 +836,7 @@ export const typeDefs = gql`
     searchProductOffers(articleNumber: String!, brand: String): ProductOffersResult!
     
     # Заказы и платежи
-    orders(clientId: String, status: OrderStatus, limit: Int, offset: Int): [Order!]!
+    orders(clientId: String, status: OrderStatus, search: String, limit: Int, offset: Int): OrdersResponse!
     order(id: ID!): Order
     orderByNumber(orderNumber: String!): Order
     payments(orderId: String, status: PaymentStatus): [Payment!]!
@@ -988,7 +988,10 @@ export const typeDefs = gql`
     # Заказы и платежи
     createOrder(input: CreateOrderInput!): Order!
     updateOrderStatus(id: ID!, status: OrderStatus!): Order!
+    confirmPayment(orderId: ID!): Order!
+    updateOrderClient(id: ID!, clientId: String!): Order!
     cancelOrder(id: ID!): Order!
+    deleteOrder(id: ID!): Boolean!
     createPayment(input: CreatePaymentInput!): CreatePaymentResult!
     cancelPayment(id: ID!): Payment!
   }
@@ -1441,6 +1444,12 @@ export const typeDefs = gql`
     comment: String
     createdAt: DateTime!
     updatedAt: DateTime!
+  }
+
+  type OrdersResponse {
+    orders: [Order!]!
+    total: Int!
+    hasMore: Boolean!
   }
 
   type OrderItem {

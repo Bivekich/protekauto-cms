@@ -11,14 +11,30 @@ const authLink = setContext((_, { headers }) => {
   // Получаем токен из cookies (как в AuthProvider)
   let token: string | null = null
   if (typeof window !== 'undefined') {
-    // Простой способ получить cookie
-    const cookies = document.cookie.split(';')
-    console.log('Apollo Client: все cookies:', cookies)
-    const authCookie = cookies.find(cookie => cookie.trim().startsWith('auth-token='))
-    console.log('Apollo Client: найден auth-token cookie:', authCookie)
-    if (authCookie) {
-      token = authCookie.split('=')[1] || null
-      console.log('Apollo Client: извлеченный токен:', token)
+    // Используем js-cookie для более надежного извлечения
+    try {
+      // Простой способ получить cookie
+      const cookies = document.cookie.split(';')
+      console.log('Apollo Client: все cookies:', cookies)
+      const authCookie = cookies.find(cookie => cookie.trim().startsWith('auth-token='))
+      console.log('Apollo Client: найден auth-token cookie:', authCookie)
+      if (authCookie) {
+        token = decodeURIComponent(authCookie.split('=')[1] || '')
+        console.log('Apollo Client: извлеченный токен:', token ? `${token.substring(0, 20)}...` : 'null')
+        
+        // Проверяем, что токен выглядит как JWT (имеет 3 части, разделенные точками)
+        if (token && token.split('.').length === 3) {
+          console.log('Apollo Client: токен выглядит как валидный JWT')
+        } else {
+          console.log('Apollo Client: токен не выглядит как JWT:', token)
+          token = null
+        }
+      } else {
+        console.log('Apollo Client: auth-token cookie не найден')
+      }
+    } catch (error) {
+      console.error('Apollo Client: ошибка при извлечении токена:', error)
+      token = null
     }
   }
   
@@ -26,7 +42,7 @@ const authLink = setContext((_, { headers }) => {
     ...headers,
     authorization: token ? `Bearer ${token}` : "",
   }
-  console.log('Apollo Client: итоговые заголовки:', finalHeaders)
+  console.log('Apollo Client: отправляем заголовок authorization:', token ? 'Bearer [JWT токен]' : 'пустой')
   
   return {
     headers: finalHeaders

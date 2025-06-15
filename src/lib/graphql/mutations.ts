@@ -1047,4 +1047,10 @@ export const CANCEL_PAYMENT = gql`
       updatedAt
     }
   }
+`
+
+export const DELETE_ORDER = gql`
+  mutation DeleteOrder($id: ID!) {
+    deleteOrder(id: $id)
+  }
 ` 

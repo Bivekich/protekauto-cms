@@ -1557,9 +1557,10 @@ export const resolvers = {
     },
 
     // Заказы и платежи
-    orders: async (_: unknown, { clientId, status, limit = 50, offset = 0 }: { 
+    orders: async (_: unknown, { clientId, status, search, limit = 50, offset = 0 }: { 
       clientId?: string; 
       status?: string; 
+      search?: string;
       limit?: number; 
       offset?: number 
     }, context: Context) => {
@@ -1574,23 +1575,39 @@ export const resolvers = {
           where.status = status
         }
 
-        const orders = await prisma.order.findMany({
-          where,
-          include: {
-            client: true,
-            items: {
-              include: {
-                product: true
-              }
-            },
-            payments: true
-          },
-          orderBy: { createdAt: 'desc' },
-          take: limit,
-          skip: offset
-        })
+        if (search) {
+          where.OR = [
+            { orderNumber: { contains: search, mode: 'insensitive' } },
+            { clientName: { contains: search, mode: 'insensitive' } },
+            { clientEmail: { contains: search, mode: 'insensitive' } },
+            { clientPhone: { contains: search, mode: 'insensitive' } }
+          ]
+        }
 
-        return orders
+        const [orders, total] = await Promise.all([
+          prisma.order.findMany({
+            where,
+            include: {
+              client: true,
+              items: {
+                include: {
+                  product: true
+                }
+              },
+              payments: true
+            },
+            orderBy: { createdAt: 'desc' },
+            take: limit,
+            skip: offset
+          }),
+          prisma.order.count({ where })
+        ])
+
+        return {
+          orders,
+          total,
+          hasMore: offset + limit < total
+        }
       } catch (error) {
         console.error('Ошибка получения заказов:', error)
         throw new Error('Не удалось получить заказы')
@@ -4925,16 +4942,59 @@ export const resolvers = {
       try {
         const actualContext = context || getContext()
         
+        // Проверяем наличие товаров из нашего склада и резервируем их
+        const internalItems = input.items.filter(item => item.productId) // Товары с productId - это наши товары
+        
+        if (internalItems.length > 0) {
+          console.log('createOrder: проверяем наличие внутренних товаров:', internalItems.length)
+          
+          // Проверяем наличие каждого товара
+          for (const item of internalItems) {
+            const product = await prisma.product.findUnique({
+              where: { id: item.productId! }
+            })
+            
+            if (!product) {
+              throw new Error(`Товар с ID ${item.productId} не найден`)
+            }
+            
+            if (product.stock < item.quantity) {
+              throw new Error(`Недостаточно товара "${product.name}" в наличии. Доступно: ${product.stock}, запрошено: ${item.quantity}`)
+            }
+          }
+          
+          console.log('createOrder: все товары доступны, резервируем')
+          
+          // Резервируем товары (вычитаем из наличия)
+          for (const item of internalItems) {
+            await prisma.product.update({
+              where: { id: item.productId! },
+              data: {
+                stock: {
+                  decrement: item.quantity
+                }
+              }
+            })
+            console.log(`createOrder: зарезервировано ${item.quantity} шт. товара ${item.productId}`)
+          }
+        }
+        
         // Генерируем номер заказа
         const orderNumber = `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
         
         // Вычисляем общую сумму
         const totalAmount = input.items.reduce((sum, item) => sum + (item.price * item.quantity), 0)
         
+        // Определяем clientId, убирая префикс client_ если он есть
+        const clientId = actualContext.clientId || input.clientId
+        const cleanClientId = clientId && clientId.startsWith('client_') 
+          ? clientId.substring(7) 
+          : clientId
+
         const order = await prisma.order.create({
           data: {
             orderNumber,
-            clientId: input.clientId,
+            clientId: cleanClientId,
             clientEmail: input.clientEmail,
             clientPhone: input.clientPhone,
             clientName: input.clientName,
@@ -4966,6 +5026,7 @@ export const resolvers = {
           }
         })
 
+        console.log('createOrder: заказ создан:', order.orderNumber)
         return order
       } catch (error) {
         console.error('Ошибка создания заказа:', error)
@@ -5001,11 +5062,130 @@ export const resolvers = {
       }
     },
 
+    confirmPayment: async (_: unknown, { orderId }: { orderId: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        console.log('confirmPayment: context:', actualContext)
+        console.log('confirmPayment: clientId:', actualContext.clientId)
+        console.log('confirmPayment: userId:', actualContext.userId)
+        
+        // Для подтверждения оплаты проверяем, что заказ принадлежит клиенту
+        if (!actualContext.clientId) {
+          console.log('confirmPayment: clientId отсутствует в контексте')
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Проверяем, что заказ принадлежит этому клиенту
+        // Убираем префикс client_ если он есть
+        const cleanClientId = actualContext.clientId.startsWith('client_') 
+          ? actualContext.clientId.substring(7) 
+          : actualContext.clientId
+        
+        console.log('confirmPayment: ищем заказ с ID:', orderId, 'для клиента:', cleanClientId, '(исходный:', actualContext.clientId, ')')
+        
+        const existingOrder = await prisma.order.findFirst({
+          where: { 
+            id: orderId,
+            clientId: cleanClientId
+          }
+        })
+
+        console.log('confirmPayment: найденный заказ:', existingOrder ? 'найден' : 'не найден')
+        
+        if (!existingOrder) {
+          // Попробуем найти заказ без фильтра по clientId для отладки
+          const anyOrder = await prisma.order.findUnique({
+            where: { id: orderId }
+          })
+          console.log('confirmPayment: заказ существует в БД:', anyOrder ? `да, clientId: ${anyOrder.clientId}` : 'нет')
+          throw new Error('Заказ не найден или не принадлежит клиенту')
+        }
+
+        const order = await prisma.order.update({
+          where: { id: orderId },
+          data: { status: 'PAID' },
+          include: {
+            client: true,
+            items: {
+              include: {
+                product: true
+              }
+            },
+            payments: true
+          }
+        })
+
+        console.log('confirmPayment: заказ обновлен:', order.id, order.status)
+        return order
+      } catch (error) {
+        console.error('Ошибка подтверждения оплаты:', error)
+        throw new Error('Не удалось подтвердить оплату')
+      }
+    },
+
+    updateOrderClient: async (_: unknown, { id, clientId }: { id: string; clientId: string }, context: Context) => {
+      try {
+        const order = await prisma.order.update({
+          where: { id },
+          data: { clientId },
+          include: {
+            client: true,
+            items: {
+              include: {
+                product: true
+              }
+            },
+            payments: true
+          }
+        })
+
+        return order
+      } catch (error) {
+        console.error('Ошибка обновления клиента заказа:', error)
+        throw new Error('Не удалось обновить клиента заказа')
+      }
+    },
+
     cancelOrder: async (_: unknown, { id }: { id: string }, context: Context) => {
       try {
         const actualContext = context || getContext()
         if (!actualContext.userId) {
           throw new Error('Пользователь не авторизован')
+        }
+
+        // Получаем заказ с товарами
+        const existingOrder = await prisma.order.findUnique({
+          where: { id },
+          include: {
+            items: {
+              include: {
+                product: true
+              }
+            }
+          }
+        })
+
+        if (!existingOrder) {
+          throw new Error('Заказ не найден')
+        }
+
+        // Возвращаем товары на склад (только внутренние товары с productId)
+        const internalItems = existingOrder.items.filter(item => item.productId)
+        
+        if (internalItems.length > 0) {
+          console.log('cancelOrder: возвращаем товары на склад:', internalItems.length)
+          
+          for (const item of internalItems) {
+            await prisma.product.update({
+              where: { id: item.productId! },
+              data: {
+                stock: {
+                  increment: item.quantity
+                }
+              }
+            })
+            console.log(`cancelOrder: возвращено ${item.quantity} шт. товара ${item.productId} на склад`)
+          }
         }
 
         const order = await prisma.order.update({
@@ -5022,6 +5202,7 @@ export const resolvers = {
           }
         })
 
+        console.log('cancelOrder: заказ отменен:', order.orderNumber)
         return order
       } catch (error) {
         console.error('Ошибка отмены заказа:', error)
@@ -5129,6 +5310,71 @@ export const resolvers = {
       } catch (error) {
         console.error('Ошибка отмены платежа:', error)
         throw new Error('Не удалось отменить платеж')
+      }
+    },
+
+    deleteOrder: async (_: unknown, { id }: { id: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.userId) {
+          throw new Error('Пользователь не авторизован')
+        }
+
+        // Проверяем, существует ли заказ
+        const order = await prisma.order.findUnique({
+          where: { id },
+          include: {
+            payments: true,
+            items: {
+              include: {
+                product: true
+              }
+            }
+          }
+        })
+
+        if (!order) {
+          throw new Error('Заказ не найден')
+        }
+
+        // Проверяем, можно ли удалить заказ (например, если он не оплачен)
+        const hasSuccessfulPayments = order.payments.some(payment => payment.status === 'SUCCEEDED')
+        if (hasSuccessfulPayments) {
+          throw new Error('Нельзя удалить оплаченный заказ')
+        }
+
+        // Возвращаем товары на склад (только внутренние товары с productId)
+        const internalItems = order.items.filter(item => item.productId)
+        
+        if (internalItems.length > 0) {
+          console.log('deleteOrder: возвращаем товары на склад:', internalItems.length)
+          
+          for (const item of internalItems) {
+            await prisma.product.update({
+              where: { id: item.productId! },
+              data: {
+                stock: {
+                  increment: item.quantity
+                }
+              }
+            })
+            console.log(`deleteOrder: возвращено ${item.quantity} шт. товара ${item.productId} на склад`)
+          }
+        }
+
+        // Удаляем заказ (связанные записи удалятся автоматически благодаря onDelete: Cascade)
+        await prisma.order.delete({
+          where: { id }
+        })
+
+        console.log('deleteOrder: заказ удален:', order.orderNumber)
+        return true
+      } catch (error) {
+        console.error('Ошибка удаления заказа:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось удалить заказ')
       }
     }
   }

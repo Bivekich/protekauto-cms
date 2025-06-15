@@ -10,7 +10,8 @@ import {
   LogOut,
   Activity,
   Package,
-  UserCheck
+  UserCheck,
+  ShoppingCart
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/components/providers/AuthProvider'
@@ -29,6 +30,11 @@ const navigationItems = [
     title: 'Каталог',
     href: '/dashboard/catalog',
     icon: Package,
+  },
+  {
+    title: 'Заказы',
+    href: '/dashboard/orders',
+    icon: ShoppingCart,
   },
   {
     title: 'Клиенты',

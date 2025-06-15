@@ -983,52 +983,56 @@ export const GET_USERS_FOR_MANAGER = gql`
 
 // Запросы для заказов и платежей
 export const GET_ORDERS = gql`
-  query GetOrders($clientId: String, $status: OrderStatus, $limit: Int, $offset: Int) {
-    orders(clientId: $clientId, status: $status, limit: $limit, offset: $offset) {
-      id
-      orderNumber
-      clientId
-      client {
+  query GetOrders($clientId: String, $status: OrderStatus, $limit: Int, $offset: Int, $search: String) {
+    orders(clientId: $clientId, status: $status, limit: $limit, offset: $offset, search: $search) {
+      orders {
         id
-        name
-        email
-        phone
-      }
-      clientEmail
-      clientPhone
-      clientName
-      status
-      totalAmount
-      discountAmount
-      finalAmount
-      currency
-      items {
-        id
-        productId
-        product {
+        orderNumber
+        clientId
+        client {
           id
           name
-          article
+          email
+          phone
         }
-        externalId
-        name
-        article
-        brand
-        price
-        quantity
-        totalPrice
-      }
-      payments {
-        id
-        yookassaPaymentId
+        clientEmail
+        clientPhone
+        clientName
         status
-        amount
-        confirmationUrl
+        totalAmount
+        discountAmount
+        finalAmount
+        currency
+        items {
+          id
+          productId
+          product {
+            id
+            name
+            article
+          }
+          externalId
+          name
+          article
+          brand
+          price
+          quantity
+          totalPrice
+        }
+        payments {
+          id
+          yookassaPaymentId
+          status
+          amount
+          confirmationUrl
+        }
+        deliveryAddress
+        comment
+        createdAt
+        updatedAt
       }
-      deliveryAddress
-      comment
-      createdAt
-      updatedAt
+      total
+      hasMore
     }
   }
 `
