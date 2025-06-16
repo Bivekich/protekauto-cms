@@ -7,6 +7,7 @@ import { smsCodeStore } from '../sms-code-store'
 import { laximoService, laximoDocService, laximoUnitService } from '../laximo-service'
 import { autoEuroService } from '../autoeuro-service'
 import { yooKassaService } from '../yookassa-service'
+import { partsAPIService } from '../partsapi-service'
 import * as csvWriter from 'csv-writer'
 import * as XLSX from 'xlsx'
 
@@ -1553,6 +1554,137 @@ export const resolvers = {
       } catch (error) {
         console.error('❌ Ошибка в GraphQL resolver searchProductOffers:', error)
         throw new Error('Не удалось найти предложения для товара')
+      }
+    },
+
+    // PartsAPI категории
+    partsAPICategories: async (_: unknown, { carId, carType = 'PC' }: { carId: number; carType?: 'PC' | 'CV' | 'Motorcycle' }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - PartsAPI категории:', { carId, carType });
+        
+        const categories = await partsAPIService.getSearchTree(carId, carType);
+        
+        console.log('✅ GraphQL Resolver - получено категорий PartsAPI:', categories.length);
+        
+        return categories;
+      } catch (error) {
+        console.error('❌ Ошибка в GraphQL resolver partsAPICategories:', error)
+        throw new Error('Не удалось получить категории PartsAPI')
+      }
+    },
+
+    partsAPITopLevelCategories: async (_: unknown, { carId, carType = 'PC' }: { carId: number; carType?: 'PC' | 'CV' | 'Motorcycle' }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - PartsAPI категории верхнего уровня:', { carId, carType });
+        
+        const tree = await partsAPIService.getSearchTree(carId, carType);
+        const categories = partsAPIService.getTopLevelCategories(tree);
+        
+        console.log('✅ GraphQL Resolver - получено категорий верхнего уровня PartsAPI:', categories.length);
+        
+        return categories;
+      } catch (error) {
+        console.error('❌ Ошибка в GraphQL resolver partsAPITopLevelCategories:', error)
+        throw new Error('Не удалось получить категории верхнего уровня PartsAPI')
+      }
+    },
+
+    partsAPIRootCategories: async (_: unknown, { carId, carType = 'PC' }: { carId: number; carType?: 'PC' | 'CV' | 'Motorcycle' }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - PartsAPI корневые категории:', { carId, carType });
+        
+        const tree = await partsAPIService.getSearchTree(carId, carType);
+        const categories = partsAPIService.getRootCategories(tree);
+        
+        console.log('✅ GraphQL Resolver - получено корневых категорий PartsAPI:', categories.length);
+        
+        return categories;
+      } catch (error) {
+        console.error('❌ Ошибка в GraphQL resolver partsAPIRootCategories:', error)
+        throw new Error('Не удалось получить корневые категории PartsAPI')
+      }
+    },
+
+    // PartsAPI артикулы
+    partsAPIArticles: async (_: unknown, { strId, carId, carType = 'PC' }: { strId: number; carId: number; carType?: 'PC' | 'CV' | 'Motorcycle' }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - PartsAPI артикулы:', { strId, carId, carType });
+        
+        const articles = await partsAPIService.getArticles(strId, carId, carType);
+        
+        console.log('✅ GraphQL Resolver - получено артикулов PartsAPI:', articles.length);
+        
+        if (!articles || articles.length === 0) {
+          console.log('⚠️ Артикулы для данной категории не найдены');
+          return [];
+        }
+        
+        // Преобразуем названия полей для соответствия GraphQL схеме с проверкой на null/undefined
+        const transformedArticles = articles.map(article => ({
+          supBrand: article.SUP_BRAND || '',
+          supId: article.SUP_ID || 0,
+          productGroup: article.PRODUCT_GROUP || '',
+          ptId: article.PT_ID || 0,
+          artSupBrand: article.ART_SUP_BRAND || '',
+          artArticleNr: article.ART_ARTICLE_NR || '',
+          artId: article.ART_ID || ''
+        }));
+        
+        return transformedArticles;
+      } catch (error) {
+        console.error('❌ Ошибка в GraphQL resolver partsAPIArticles:', error)
+        // Возвращаем пустой массив вместо выброса ошибки
+        return [];
+      }
+    },
+
+    // PartsAPI изображения
+    partsAPIMedia: async (_: unknown, { artId, lang = 16 }: { artId: string; lang?: number }) => {
+      try {
+        console.log('🖼️ GraphQL Resolver - PartsAPI изображения:', { artId, lang });
+        
+        const media = await partsAPIService.getArticleMedia(artId, lang);
+        
+        console.log('✅ GraphQL Resolver - получено изображений PartsAPI:', media.length);
+        
+        if (!media || media.length === 0) {
+          console.log('⚠️ Изображения для артикула не найдены');
+          return [];
+        }
+        
+        // Преобразуем данные для GraphQL схемы
+        const transformedMedia = media.map(item => ({
+          artMediaType: String(item.ART_MEDIA_TYPE),
+          artMediaSource: item.ART_MEDIA_SOURCE,
+          artMediaSupId: item.ART_MEDIA_SUP_ID,
+          artMediaKind: item.ART_MEDIA_KIND || null,
+          imageUrl: partsAPIService.getImageUrl(item.ART_MEDIA_SOURCE)
+        }));
+        
+        return transformedMedia;
+      } catch (error) {
+        console.error('❌ GraphQL Resolver ошибка PartsAPI изображения:', error);
+        return [];
+      }
+    },
+
+    // PartsAPI главное изображение
+    partsAPIMainImage: async (_: unknown, { artId }: { artId: string }) => {
+      try {
+        console.log('🖼️ GraphQL Resolver - PartsAPI главное изображение:', { artId });
+        
+        const imageUrl = await partsAPIService.getArticleMainImage(artId);
+        
+        if (imageUrl) {
+          console.log('✅ GraphQL Resolver - получено главное изображение PartsAPI');
+        } else {
+          console.log('⚠️ Главное изображение для артикула не найдено');
+        }
+        
+        return imageUrl;
+      } catch (error) {
+        console.error('❌ GraphQL Resolver ошибка PartsAPI главное изображение:', error);
+        return null;
       }
     },
 

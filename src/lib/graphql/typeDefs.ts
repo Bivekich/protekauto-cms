@@ -835,6 +835,18 @@ export const typeDefs = gql`
     # Поиск товаров и предложений
     searchProductOffers(articleNumber: String!, brand: String): ProductOffersResult!
     
+    # PartsAPI категории
+    partsAPICategories(carId: Int!, carType: CarType): [PartsAPICategory!]!
+    partsAPITopLevelCategories(carId: Int!, carType: CarType): [PartsAPICategory!]!
+    partsAPIRootCategories(carId: Int!, carType: CarType): [PartsAPICategory!]!
+    
+    # PartsAPI артикулы
+    partsAPIArticles(strId: Int!, carId: Int!, carType: CarType): [PartsAPIArticle!]
+    
+    # PartsAPI изображения
+    partsAPIMedia(artId: String!, lang: Int): [PartsAPIMedia!]!
+    partsAPIMainImage(artId: String!): String
+    
     # Заказы и платежи
     orders(clientId: String, status: OrderStatus, search: String, limit: Int, offset: Int): OrdersResponse!
     order(id: ID!): Order
@@ -1516,5 +1528,38 @@ export const typeDefs = gql`
   type CreatePaymentResult {
     payment: Payment!
     confirmationUrl: String!
+  }
+
+  # PartsAPI типы для категорий автозапчастей
+  type PartsAPICategory {
+    id: String!
+    name: String!
+    level: Int!
+    parentId: String
+    children: [PartsAPICategory!]!
+  }
+
+  enum CarType {
+    PC
+    CV
+    Motorcycle
+  }
+
+  type PartsAPIArticle {
+    supBrand: String!
+    supId: Int!
+    productGroup: String!
+    ptId: Int!
+    artSupBrand: String!
+    artArticleNr: String!
+    artId: String!
+  }
+
+  type PartsAPIMedia {
+    artMediaType: String!       # Тип медиа: JPEG, PNG, WebP, PDF и т.д.
+    artMediaSource: String!     # Полный URL или относительный путь к файлу
+    artMediaSupId: Int!         # Идентификатор поставщика запчасти
+    artMediaKind: String        # Вид медиа-материала (может отсутствовать)
+    imageUrl: String            # Полный URL изображения
   }
 ` 
