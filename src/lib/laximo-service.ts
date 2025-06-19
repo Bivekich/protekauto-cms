@@ -1422,7 +1422,7 @@ class LaximoService {
       return []
     }
 
-    const rowMatches = resultData.match(/<row[^>]*\/?>|<row[^>]*>[\s\S]*?<\/row>/g)
+    const rowMatches = resultData.match(/<row[^>]*>[\s\S]*?<\/row>/g)
     if (!rowMatches) {
       console.log('❌ Не найдены строки row в ответе')
       return []
@@ -1443,26 +1443,144 @@ class LaximoService {
         return match ? match[1] : ''
       }
 
+      // Парсим атрибуты из дочерних элементов <attribute>
+      const attributeMap = new Map<string, string>()
+      
+      // Отладочное логирование
+      console.log('🔍 Полный XML контент строки:', rowMatch.substring(0, 500))
+      
+      const attributeMatches = rowMatch.match(/<attribute[^>]*\/?>|<attribute[^>]*>[\s\S]*?<\/attribute>/g)
+      
+      if (attributeMatches) {
+        console.log(`📋 Найдено ${attributeMatches.length} дочерних атрибутов`)
+        console.log('🔍 Первые несколько атрибутов:', attributeMatches.slice(0, 3))
+        
+        for (const attrMatch of attributeMatches) {
+          const attrTagMatch = attrMatch.match(/<attribute([^>]*)>/);
+          if (!attrTagMatch) continue;
+          
+          const attrAttributes = attrTagMatch[1];
+          
+          const getAttrAttribute = (name: string): string => {
+            const match = attrAttributes.match(new RegExp(`${name}="([^"]*)"`, 'i'))
+            return match ? match[1] : ''
+          }
+
+          const key = getAttrAttribute('key')
+          const value = getAttrAttribute('value')
+          
+          if (key && value) {
+            attributeMap.set(key, value)
+            console.log(`🔑 Атрибут: ${key} = ${value}`)
+          }
+        }
+        console.log(`📊 Всего атрибутов в карте: ${attributeMap.size}`)
+      } else {
+        console.log('❌ Дочерние атрибуты не найдены')
+        console.log('🔍 Проверим содержимое rowMatch:')
+        console.log('   - Содержит <attribute:', rowMatch.includes('<attribute'))
+        console.log('   - Длина rowMatch:', rowMatch.length)
+      }
+
+      // Получаем данные из атрибутов row и дочерних элементов attribute
       const vehicleName = getAttribute('name')
+      
+      // Ищем год в разных атрибутах
+      const year = getAttribute('year') || 
+                   attributeMap.get('manufactured') || 
+                   attributeMap.get('date')?.split('.').pop() || 
+                   attributeMap.get('modelyear') ||
+                   attributeMap.get('productionyear') || ''
+      
+      // Ищем двигатель в разных атрибутах 
+      const engine = getAttribute('engine') || 
+                     attributeMap.get('engine') || 
+                     attributeMap.get('engine_info') ||
+                     attributeMap.get('enginecode') ||
+                     attributeMap.get('enginetype') || ''
+      
+      const modification = getAttribute('modification') || attributeMap.get('modification') || ''
+      const bodytype = getAttribute('bodytype') || attributeMap.get('bodytype') || ''
+      
+      // Логируем все доступные ключи для отладки
+      if (attributeMap.size > 0) {
+        console.log('🗝️ Все доступные ключи атрибутов:', Array.from(attributeMap.keys()).sort())
+      }
+      
+      console.log('🔍 Извлеченные значения:')
+      console.log(`  - year: "${year}" (из: getAttribute('year')="${getAttribute('year')}", manufactured="${attributeMap.get('manufactured')}", date="${attributeMap.get('date')}")`)
+      console.log(`  - engine: "${engine}" (из: getAttribute('engine')="${getAttribute('engine')}", engine="${attributeMap.get('engine')}", engine_info="${attributeMap.get('engine_info')}")`)
+      console.log(`  - modification: "${modification}"`)
+      console.log(`  - bodytype: "${bodytype}"`)
+      
       const vehicle = {
         vehicleid: getAttribute('vehicleid'),
         name: vehicleName || undefined,
         brand: getAttribute('brand'),
         catalog: getAttribute('catalog') || undefined,
         model: vehicleName || getAttribute('model'),
-        modification: getAttribute('modification'),
-        year: getAttribute('year'),
-        bodytype: getAttribute('bodytype'),
-        engine: getAttribute('engine'),
+        modification: modification,
+        year: year,
+        bodytype: bodytype,
+        engine: engine,
         notes: getAttribute('notes') || undefined,
-        ssd: getAttribute('ssd') || undefined
+        ssd: getAttribute('ssd') || undefined,
+        
+        // Дополнительные атрибуты из документации Laximo
+        grade: attributeMap.get('grade') || undefined,
+        transmission: attributeMap.get('transmission') || undefined,
+        doors: attributeMap.get('doors') || undefined,
+        creationregion: attributeMap.get('creationregion') || undefined,
+        destinationregion: attributeMap.get('destinationregion') || undefined,
+        date: attributeMap.get('date') || undefined,
+        manufactured: attributeMap.get('manufactured') || undefined,
+        framecolor: attributeMap.get('framecolor') || undefined,
+        trimcolor: attributeMap.get('trimcolor') || undefined,
+        datefrom: attributeMap.get('datefrom') || undefined,
+        dateto: attributeMap.get('dateto') || undefined,
+        frame: attributeMap.get('frame') || undefined,
+        frames: attributeMap.get('frames') || undefined,
+        framefrom: attributeMap.get('framefrom') || undefined,
+        frameto: attributeMap.get('frameto') || undefined,
+        engine1: attributeMap.get('engine1') || undefined,
+        engine2: attributeMap.get('engine2') || undefined,
+        engine_info: attributeMap.get('engine_info') || undefined,
+        engineno: attributeMap.get('engineno') || undefined,
+        options: attributeMap.get('options') || undefined,
+        modelyearfrom: attributeMap.get('modelyearfrom') || undefined,
+        modelyearto: attributeMap.get('modelyearto') || undefined,
+        description: attributeMap.get('description') || undefined,
+        market: attributeMap.get('market') || undefined,
+        prodRange: attributeMap.get('prodrange') || undefined, // Используем ключ в нижнем регистре из API
+        prodPeriod: attributeMap.get('prodPeriod') || undefined,
+        carpet_color: attributeMap.get('carpet_color') || undefined,
+        seat_combination_code: attributeMap.get('seat_combination_code') || undefined,
       }
       
       console.log('🚗 Найден автомобиль:', {
         vehicleid: vehicle.vehicleid,
         name: vehicleName || `${vehicle.brand} ${vehicle.model}`,
-        ssd: vehicle.ssd ? vehicle.ssd.substring(0, 50) + '...' : 'нет SSD'
+        brand: vehicle.brand,
+        catalog: vehicle.catalog,
+        engine: engine,
+        year: year,
+        ssd: vehicle.ssd ? vehicle.ssd.substring(0, 50) + '...' : 'нет SSD',
+        modification: modification,
+        model: vehicle.model,
+        // Дополнительные характеристики для проверки
+        transmission: vehicle.transmission,
+        market: vehicle.market,
+        framecolor: vehicle.framecolor,
+        trimcolor: vehicle.trimcolor,
+        date: vehicle.date,
+        manufactured: vehicle.manufactured,
+        prodRange: vehicle.prodRange,
+        prodPeriod: vehicle.prodPeriod,
+        engine_info: vehicle.engine_info,
+        engineno: vehicle.engineno
       })
+      
+      console.log('📊 Финальный объект автомобиля перед возвратом:', JSON.stringify(vehicle, null, 2))
       
       vehicles.push(vehicle)
     }
@@ -1629,7 +1747,33 @@ class LaximoService {
       return []
     }
 
-    return this.parseQuickGroupRows(quickGroupsMatch[1])
+    const parsedGroups = this.parseQuickGroupRows(quickGroupsMatch[1])
+    console.log('🏗️ РЕЗУЛЬТАТ ПАРСИНГА XML:')
+    console.log('📊 Количество групп верхнего уровня:', parsedGroups.length)
+    
+    // Логируем первые несколько групп для диагностики
+    parsedGroups.slice(0, 3).forEach((group, index) => {
+      console.log(`📦 Группа ${index + 1}:`, {
+        id: group.quickgroupid,
+        name: group.name,
+        link: group.link,
+        children: group.children?.length || 0
+      })
+      
+      // Логируем первые дочерние элементы
+      if (group.children && group.children.length > 0) {
+        group.children.slice(0, 3).forEach((child, childIndex) => {
+          console.log(`  └─ Дочерняя группа ${childIndex + 1}:`, {
+            id: child.quickgroupid,
+            name: child.name,
+            link: child.link,
+            children: child.children?.length || 0
+          })
+        })
+      }
+    })
+    
+    return parsedGroups
   }
 
   /**

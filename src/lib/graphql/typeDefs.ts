@@ -833,7 +833,8 @@ export const typeDefs = gql`
     laximoUnitImageMap(catalogCode: String!, vehicleId: String!, unitId: String!, ssd: String!): LaximoUnitImageMap
     
     # Поиск товаров и предложений
-    searchProductOffers(articleNumber: String!, brand: String): ProductOffersResult!
+    searchProductOffers(articleNumber: String!, brand: String!): ProductOffersResult!
+    getAnalogOffers(analogs: [AnalogOfferInput!]!): [AnalogProduct!]
     
     # PartsAPI категории
     partsAPICategories(carId: Int!, carType: CarType): [PartsAPICategory!]!
@@ -1142,6 +1143,25 @@ export const typeDefs = gql`
     engine: String!
     notes: String
     ssd: String
+    transmission: String
+    date: String
+    manufactured: String
+    framecolor: String
+    trimcolor: String
+    engine_info: String
+    engineno: String
+    market: String
+    prodRange: String
+    prodPeriod: String
+    destinationregion: String
+    creationregion: String
+    datefrom: String
+    dateto: String
+    modelyearfrom: String
+    modelyearto: String
+    options: String
+    description: String
+    grade: String
   }
 
   type LaximoVehicleInfo {
@@ -1374,7 +1394,7 @@ export const typeDefs = gql`
     name: String!
     internalOffers: [InternalOffer!]!
     externalOffers: [ExternalOffer!]!
-    analogs: [AnalogProduct!]!
+    analogs: [AnalogInfo!]!
     hasInternalStock: Boolean!
     totalOffers: Int!
   }
@@ -1389,6 +1409,7 @@ export const typeDefs = gql`
     available: Boolean!
     rating: Float
     supplier: String!
+    canPurchase: Boolean!
   }
 
   type ExternalOffer {
@@ -1409,6 +1430,13 @@ export const typeDefs = gql`
     canPurchase: Boolean!
   }
 
+  type AnalogInfo {
+    brand: String!
+    articleNumber: String!
+    name: String!
+    type: String
+  }
+
   type AnalogProduct {
     brand: String!
     articleNumber: String!
@@ -1416,6 +1444,11 @@ export const typeDefs = gql`
     type: String
     internalOffers: [InternalOffer!]!
     externalOffers: [ExternalOffer!]!
+  }
+
+  input AnalogOfferInput {
+    articleNumber: String!
+    brand: String!
   }
 
   # Типы для заказов и платежей

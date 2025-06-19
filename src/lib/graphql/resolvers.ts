@@ -1203,7 +1203,24 @@ export const resolvers = {
 
     laximoQuickGroups: async (_: unknown, { catalogCode, vehicleId, ssd }: { catalogCode: string; vehicleId: string; ssd?: string }) => {
       try {
-        return await laximoService.getListQuickGroup(catalogCode, vehicleId, ssd)
+        console.log('🔧 GraphQL Resolver - получение групп быстрого поиска:', { catalogCode, vehicleId, ssd: ssd?.substring(0, 30) })
+        
+        const groups = await laximoService.getListQuickGroup(catalogCode, vehicleId, ssd)
+        
+        console.log('🎯 GraphQL Resolver - результат от LaximoService:')
+        console.log('📊 Общее количество групп:', groups.length)
+        
+        // Логируем первые несколько групп
+        groups.slice(0, 3).forEach((group, index) => {
+          console.log(`📦 Группа ${index + 1} от service:`, {
+            id: group.quickgroupid,
+            name: group.name,
+            link: group.link,
+            children: group.children?.length || 0
+          })
+        })
+        
+        return groups
       } catch (error) {
         console.error('Ошибка получения групп быстрого поиска:', error)
         return []
@@ -1428,70 +1445,12 @@ export const resolvers = {
             for (const detail of laximoResult.details) {
               if (detail.replacements && detail.replacements.length > 0) {
                 for (const replacement of detail.replacements) {
-                  // Поиск каждого аналога в нашей базе и AutoEuro
-                  const analogArticle = replacement.detail.formattedoem || replacement.detail.oem
-                  const analogBrand = replacement.detail.manufacturer
-
-                  // Поиск в нашей базе
-                  const analogInternalProducts = await prisma.product.findMany({
-                    where: {
-                      article: {
-                        equals: analogArticle,
-                        mode: 'insensitive'
-                      }
-                    }
+                  analogs.push({
+                    brand: replacement.detail.manufacturer,
+                    articleNumber: replacement.detail.formattedoem || replacement.detail.oem,
+                    name: replacement.detail.name,
+                    type: replacement.type,
                   })
-
-                  // Поиск в AutoEuro
-                  let analogExternalOffers: any[] = []
-                  try {
-                    const analogAutoEuroResult = await autoEuroService.searchItems({
-                      code: analogArticle,
-                      brand: analogBrand,
-                      with_crosses: false,
-                      with_offers: true
-                    })
-
-                    if (analogAutoEuroResult.success && analogAutoEuroResult.data) {
-                      analogExternalOffers = analogAutoEuroResult.data.map(offer => ({
-                        offerKey: offer.offer_key,
-                        brand: offer.brand,
-                        code: offer.code,
-                        name: offer.name,
-                        price: parseFloat(offer.price.toString()),
-                        currency: offer.currency || 'RUB',
-                        deliveryTime: calculateDeliveryDays(offer.delivery_time || ''),
-                        deliveryTimeMax: calculateDeliveryDays(offer.delivery_time_max || ''),
-                        quantity: offer.amount || 0,
-                        warehouse: offer.warehouse_name || 'Внешний склад',
-                        supplier: 'AutoEuro',
-                        canPurchase: true
-                      }))
-                    }
-                  } catch (error) {
-                    console.error(`❌ Ошибка поиска аналога ${analogArticle} в AutoEuro:`, error)
-                  }
-
-                  if (analogInternalProducts.length > 0 || analogExternalOffers.length > 0) {
-                    analogs.push({
-                      brand: analogBrand,
-                      articleNumber: analogArticle,
-                      name: replacement.detail.name,
-                      type: replacement.type,
-                      internalOffers: analogInternalProducts.map(product => ({
-                        id: product.id,
-                        productId: product.id,
-                        price: product.retailPrice || 0,
-                        quantity: product.stock || 0,
-                        warehouse: 'Основной склад',
-                        deliveryDays: 1,
-                        available: (product.stock || 0) > 0,
-                        rating: 4.8,
-                        supplier: 'Protek'
-                      })),
-                      externalOffers: analogExternalOffers
-                    })
-                  }
                 }
               }
             }
@@ -1554,6 +1513,91 @@ export const resolvers = {
       } catch (error) {
         console.error('❌ Ошибка в GraphQL resolver searchProductOffers:', error)
         throw new Error('Не удалось найти предложения для товара')
+      }
+    },
+
+    getAnalogOffers: async (_: unknown, { analogs }: { analogs: { articleNumber: string; brand: string }[] }) => {
+      try {
+        console.log('🔍 GraphQL Resolver - поиск предложений для аналогов:', { count: analogs.length })
+
+        const analogPromises = analogs.map(async (analog) => {
+          const { articleNumber, brand } = analog
+
+          // Поиск в нашей базе
+          const analogInternalProducts = await prisma.product.findMany({
+            where: { article: { equals: articleNumber, mode: 'insensitive' } },
+          })
+
+          // Поиск в AutoEuro
+          let analogExternalOffers: any[] = []
+          try {
+            const analogAutoEuroResult = await autoEuroService.searchItems({
+              code: articleNumber,
+              brand: brand,
+              with_crosses: false,
+              with_offers: true,
+            })
+
+            if (analogAutoEuroResult.success && analogAutoEuroResult.data) {
+              analogExternalOffers = analogAutoEuroResult.data.map((offer) => ({
+                offerKey: offer.offer_key,
+                brand: offer.brand,
+                code: offer.code,
+                name: offer.name,
+                price: parseFloat(offer.price.toString()),
+                currency: offer.currency || 'RUB',
+                deliveryTime: calculateDeliveryDays(offer.delivery_time || ''),
+                deliveryTimeMax: calculateDeliveryDays(offer.delivery_time_max || ''),
+                quantity: offer.amount || 0,
+                warehouse: offer.warehouse_name || 'Внешний склад',
+                supplier: 'AutoEuro',
+                canPurchase: true,
+              }))
+            }
+          } catch (error) {
+            console.error(`❌ Ошибка поиска аналога ${articleNumber} в AutoEuro:`, error)
+          }
+          
+          let name = ''
+          if(analogInternalProducts.length > 0) {
+            name = analogInternalProducts[0].name;
+          } else if(analogExternalOffers.length > 0) {
+            name = analogExternalOffers[0].name;
+          }
+
+          return {
+            brand,
+            articleNumber,
+            name: name,
+            type: 'ANALOG',
+            internalOffers: analogInternalProducts.map((product) => ({
+              id: product.id,
+              productId: product.id,
+              price: product.retailPrice || 0,
+              quantity: product.stock || 0,
+              warehouse: 'Основной склад',
+              deliveryDays: 1,
+              available: (product.stock || 0) > 0,
+              rating: 4.8,
+              supplier: 'Protek',
+            })),
+            externalOffers: analogExternalOffers,
+          }
+        })
+
+        const settledAnalogs = await Promise.all(analogPromises)
+        
+        // Больше не фильтруем аналоги без предложений
+        // const analogsWithOffers = settledAnalogs.filter(
+        //   (a) => a.internalOffers.length > 0 || a.externalOffers.length > 0
+        // )
+        
+        console.log(`✅ Найдено предложений для ${settledAnalogs.filter(a => a.internalOffers.length > 0 || a.externalOffers.length > 0).length} из ${analogs.length} аналогов.`)
+
+        return settledAnalogs
+      } catch (error) {
+        console.error('❌ Ошибка в GraphQL resolver getAnalogOffers:', error)
+        throw new Error('Не удалось найти предложения для аналогов')
       }
     },
 
