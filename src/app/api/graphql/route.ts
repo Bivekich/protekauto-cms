@@ -43,8 +43,30 @@ async function createContext(req: any): Promise<Context> {
   // Если это не админский токен, проверяем, не клиентский ли это токен
   if (token.startsWith('client_')) {
     console.log('GraphQL: найден клиентский токен:', token)
+    
+    // Различаем два типа токенов:
+    // 1. client_${cuid} - для зарегистрированных клиентов
+    // 2. client_${cuid}_${timestamp} - для зарегистрированных клиентов с timestamp
+    // 3. client_cmbzedr1k0000rqz5phpvgpxc - временные клиенты (длинные ID)
+    
+    const tokenParts = token.split('_')
+    let clientId = token  // по умолчанию весь токен для временных клиентов
+    
+    if (tokenParts.length >= 3) {
+      // Это токен формата client_${clientId}_${timestamp} - извлекаем реальный ID
+      clientId = tokenParts[1]
+      console.log('GraphQL: извлечен реальный clientId из токена с timestamp:', clientId)
+    } else if (tokenParts.length === 2) {
+      // Это токен формата client_${clientId} - извлекаем реальный ID
+      clientId = tokenParts[1]
+      console.log('GraphQL: извлечен реальный clientId:', clientId)
+    } else {
+      // Временный клиент
+      console.log('GraphQL: используем временный clientId:', clientId)
+    }
+    
     const context = {
-      clientId: token,
+      clientId: clientId,
       headers: requestHeaders
     }
     console.log('GraphQL: возвращаем клиентский контекст:', context)

@@ -255,6 +255,7 @@ model Client {
   bankDetails       ClientBankDetails[]
   balanceHistory    ClientBalanceHistory[]
   orders            Order[]
+  partsSearchHistory PartsSearchHistory[]
   
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
@@ -419,6 +420,33 @@ model ClientVehicle {
   createdAt   DateTime @default(now())
 
   @@map("client_vehicles")
+}
+
+// История поиска запчастей
+model PartsSearchHistory {
+  id            String      @id @default(cuid())
+  clientId      String
+  client        Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  searchQuery   String      // Поисковый запрос
+  searchType    SearchType  // Тип поиска
+  brand         String?     // Бренд (если искали по бренду)
+  articleNumber String?     // Артикул (если искали по артикулу)
+  
+  // Информация об автомобиле (если поиск был для конкретного авто)
+  vehicleBrand  String?
+  vehicleModel  String?
+  vehicleYear   Int?
+  
+  resultCount   Int         @default(0) // Количество найденных результатов
+  createdAt     DateTime    @default(now())
+
+  @@map("parts_search_history")
+}
+
+enum SearchType {
+  TEXT     // Текстовый поиск
+  ARTICLE  // Поиск по артикулу
+  OEM      // Поиск по OEM номеру
 }
 
 // Адреса доставки

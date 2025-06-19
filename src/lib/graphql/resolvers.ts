@@ -58,6 +58,62 @@ interface Context {
   headers?: Headers
 }
 
+// Функция для сохранения истории поиска запчастей
+const saveSearchHistory = async (
+  context: Context, 
+  searchQuery: string, 
+  searchType: 'TEXT' | 'ARTICLE' | 'OEM', 
+  brand?: string, 
+  articleNumber?: string,
+  vehicleInfo?: { brand?: string; model?: string; year?: number },
+  resultCount: number = 0
+) => {
+  try {
+    if (!context.clientId) {
+      return // Не сохраняем историю для неавторизованных пользователей
+    }
+
+    // Определяем clientId, убирая префикс client_ если он есть
+    const clientIdParts = context.clientId.split('_')
+    let clientId = context.clientId
+
+    if (clientIdParts.length >= 3) {
+      clientId = clientIdParts[1] // client_ID_timestamp -> ID
+    } else if (clientIdParts.length === 2) {
+      clientId = clientIdParts[1] // client_ID -> ID
+    }
+
+    // Проверяем существует ли клиент
+    const client = await prisma.client.findUnique({
+      where: { id: clientId }
+    })
+
+    if (!client) {
+      console.log('saveSearchHistory: клиент не найден:', clientId)
+      return
+    }
+
+    // Сохраняем в историю поиска
+    await prisma.partsSearchHistory.create({
+      data: {
+        clientId,
+        searchQuery,
+        searchType,
+        brand,
+        articleNumber,
+        vehicleBrand: vehicleInfo?.brand,
+        vehicleModel: vehicleInfo?.model,
+        vehicleYear: vehicleInfo?.year,
+        resultCount
+      }
+    })
+
+    console.log('✅ Сохранена запись в истории поиска:', { searchQuery, searchType, resultCount })
+  } catch (error) {
+    console.error('❌ Ошибка сохранения истории поиска:', error)
+  }
+}
+
 // Интерфейсы для каталога
 interface CategoryInput {
   name: string
@@ -895,6 +951,28 @@ export const resolvers = {
           throw new Error('Клиент не авторизован')
         }
 
+        // Проверяем существует ли клиент, если нет - создаем только для временных клиентов
+        let client = await prisma.client.findUnique({
+          where: { id: context.clientId }
+        })
+
+        if (!client) {
+          if (context.clientId.startsWith('client_') && context.clientId.length > 30) {
+            client = await prisma.client.create({
+              data: {
+                id: context.clientId,
+                clientNumber: `CLIENT_${Date.now()}`,
+                type: 'INDIVIDUAL',
+                name: 'Гость',
+                phone: '+7',
+                isConfirmed: false
+              }
+            })
+          } else {
+            throw new Error('Клиент не найден в системе')
+          }
+        }
+
         return await prisma.clientVehicle.findMany({
           where: { clientId: context.clientId },
           orderBy: { createdAt: 'desc' }
@@ -958,6 +1036,93 @@ export const resolvers = {
       } catch (error) {
         console.error('Ошибка получения истории поиска:', error)
         throw new Error('Не удалось получить историю поиска')
+      }
+    },
+
+    // История поиска запчастей
+    partsSearchHistory: async (_: unknown, { limit = 50, offset = 0 }: { limit?: number; offset?: number }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          // Для неавторизованных пользователей возвращаем пустую историю
+          return {
+            items: [],
+            total: 0,
+            hasMore: false
+          }
+        }
+
+        // Определяем clientId, убирая префикс client_ если он есть
+        const clientIdParts = actualContext.clientId.split('_')
+        let clientId = actualContext.clientId
+
+        if (clientIdParts.length >= 3) {
+          clientId = clientIdParts[1] // client_ID_timestamp -> ID
+        } else if (clientIdParts.length === 2) {
+          clientId = clientIdParts[1] // client_ID -> ID
+        }
+
+        console.log('partsSearchHistory: получение истории для клиента:', clientId)
+        console.log('prisma.partsSearchHistory:', typeof prisma.partsSearchHistory)
+
+        // Проверяем существует ли клиент
+        const client = await prisma.client.findUnique({
+          where: { id: clientId }
+        })
+
+        if (!client) {
+          console.log('partsSearchHistory: клиент не найден:', clientId)
+          return {
+            items: [],
+            total: 0,
+            hasMore: false
+          }
+        }
+
+        // Проверяем, что Prisma Client правильно инициализирован
+        if (!prisma.partsSearchHistory) {
+          console.error('prisma.partsSearchHistory не определен')
+          throw new Error('Ошибка инициализации базы данных')
+        }
+
+        // Получаем общее количество записей
+        const total = await prisma.partsSearchHistory.count({
+          where: { clientId }
+        })
+
+        // Получаем записи истории
+        const historyItems = await prisma.partsSearchHistory.findMany({
+          where: { clientId },
+          orderBy: { createdAt: 'desc' },
+          take: limit,
+          skip: offset
+        })
+
+        console.log(`partsSearchHistory: найдено ${historyItems.length} записей`)
+
+        const items = historyItems.map(item => ({
+          id: item.id,
+          searchQuery: item.searchQuery,
+          searchType: item.searchType,
+          brand: item.brand,
+          articleNumber: item.articleNumber,
+          vehicleInfo: item.vehicleBrand || item.vehicleModel || item.vehicleYear ? {
+            brand: item.vehicleBrand,
+            model: item.vehicleModel,
+            year: item.vehicleYear
+          } : null,
+          resultCount: item.resultCount,
+          createdAt: item.createdAt.toISOString()
+        }))
+
+        return {
+          items,
+          total,
+          hasMore: offset + limit < total
+        }
+      } catch (error) {
+        console.error('Ошибка получения истории поиска запчастей:', error)
+        throw new Error('Не удалось получить историю поиска запчастей')
       }
     },
 
@@ -1281,7 +1446,7 @@ export const resolvers = {
       }
     },
 
-    laximoFulltextSearch: async (_: unknown, { catalogCode, vehicleId, searchQuery, ssd }: { catalogCode: string; vehicleId: string; searchQuery: string; ssd: string }) => {
+    laximoFulltextSearch: async (_: unknown, { catalogCode, vehicleId, searchQuery, ssd }: { catalogCode: string; vehicleId: string; searchQuery: string; ssd: string }, context: Context) => {
       try {
         console.log('🔍 GraphQL Resolver - Поиск деталей по названию:', { catalogCode, vehicleId, searchQuery, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
         
@@ -1293,6 +1458,18 @@ export const resolvers = {
           
           if (!hasFulltextSearch) {
             console.log('⚠️ Каталог не поддерживает полнотекстовый поиск')
+            
+            // Сохраняем в историю поиска даже при отсутствии результатов
+            await saveSearchHistory(
+              context,
+              searchQuery,
+              'TEXT',
+              undefined,
+              undefined,
+              undefined,
+              0
+            )
+            
             return {
               searchQuery: searchQuery,
               details: []
@@ -1305,6 +1482,19 @@ export const resolvers = {
         const result = await laximoService.searchVehicleDetails(catalogCode, vehicleId, searchQuery, ssd)
         console.log('📋 Результат от LaximoService:', result ? `найдено ${result.details.length} деталей` : 'результат null')
         
+        // Сохраняем в историю поиска
+        if (result) {
+          await saveSearchHistory(
+            context,
+            searchQuery,
+            'TEXT',
+            undefined,
+            undefined,
+            undefined,
+            result.details.length
+          )
+        }
+        
         return result
       } catch (err) {
         console.error('❌ Ошибка в GraphQL resolver поиска деталей по названию:', err)
@@ -1312,12 +1502,25 @@ export const resolvers = {
       }
     },
 
-    laximoDocFindOEM: async (_: unknown, { oemNumber, brand, replacementTypes }: { oemNumber: string; brand?: string; replacementTypes?: string }) => {
+    laximoDocFindOEM: async (_: unknown, { oemNumber, brand, replacementTypes }: { oemNumber: string; brand?: string; replacementTypes?: string }, context: Context) => {
       try {
         console.log('🔍 GraphQL Resolver - Doc FindOEM поиск по артикулу:', { oemNumber, brand, replacementTypes })
         
         const result = await laximoDocService.findOEM(oemNumber, brand, replacementTypes)
         console.log('📋 Результат от LaximoDocService:', result ? `найдено ${result.details.length} деталей` : 'результат null')
+        
+        // Сохраняем в историю поиска
+        if (result) {
+          await saveSearchHistory(
+            context,
+            oemNumber,
+            'OEM',
+            brand,
+            oemNumber,
+            undefined,
+            result.details.length
+          )
+        }
         
         return result
       } catch (err) {
@@ -1370,7 +1573,7 @@ export const resolvers = {
     },
 
     // Поиск товаров и предложений
-    searchProductOffers: async (_: unknown, { articleNumber, brand }: { articleNumber: string; brand: string }) => {
+    searchProductOffers: async (_: unknown, { articleNumber, brand }: { articleNumber: string; brand: string }, context: Context) => {
       try {
         console.log('🔍 GraphQL Resolver - поиск предложений для товара:', { articleNumber, brand })
 
@@ -1508,6 +1711,17 @@ export const resolvers = {
         console.log('- Внутренние предложения:', result.internalOffers)
         console.log('- Внешние предложения:', result.externalOffers.slice(0, 3))
         console.log('- Аналоги:', result.analogs.length)
+
+        // Сохраняем в историю поиска
+        await saveSearchHistory(
+          context,
+          `${brand} ${articleNumber}`,
+          'ARTICLE',
+          brand,
+          articleNumber,
+          undefined,
+          result.totalOffers
+        )
 
         return result
       } catch (error) {
@@ -4908,6 +5122,28 @@ export const resolvers = {
           throw new Error('Клиент не авторизован')
         }
 
+        // Проверяем существует ли клиент, если нет - создаем только для временных клиентов
+        let client = await prisma.client.findUnique({
+          where: { id: actualContext.clientId }
+        })
+
+                  if (!client) {
+            if (actualContext.clientId.startsWith('client_') && actualContext.clientId.length > 30) {
+            client = await prisma.client.create({
+              data: {
+                id: actualContext.clientId,
+                clientNumber: `CLIENT_${Date.now()}`,
+                type: 'INDIVIDUAL',
+                name: 'Гость',
+                phone: '+7',
+                isConfirmed: false
+              }
+            })
+          } else {
+            throw new Error('Клиент не найден в системе')
+          }
+        }
+
         const vehicle = await prisma.clientVehicle.create({
           data: {
             clientId: actualContext.clientId,
@@ -5041,6 +5277,235 @@ export const resolvers = {
       } catch (error) {
         console.error('Ошибка удаления из истории поиска:', error)
         throw new Error('Не удалось удалить элемент из истории поиска')
+      }
+    },
+
+    // Мутации для истории поиска запчастей
+    deletePartsSearchHistoryItem: async (_: unknown, { id }: { id: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Определяем clientId, убирая префикс client_ если он есть
+        const clientIdParts = actualContext.clientId.split('_')
+        let clientId = actualContext.clientId
+
+        if (clientIdParts.length >= 3) {
+          clientId = clientIdParts[1]
+        } else if (clientIdParts.length === 2) {
+          clientId = clientIdParts[1]
+        }
+
+        console.log('deletePartsSearchHistoryItem: удаление записи', id, 'для клиента', clientId)
+
+        // Проверяем, что запись принадлежит клиенту
+        const existingItem = await prisma.partsSearchHistory.findFirst({
+          where: { id, clientId }
+        })
+
+        if (!existingItem) {
+          throw new Error('Запись не найдена или не принадлежит клиенту')
+        }
+
+        await prisma.partsSearchHistory.delete({
+          where: { id }
+        })
+
+        console.log('deletePartsSearchHistoryItem: запись удалена')
+        return true
+      } catch (error) {
+        console.error('Ошибка удаления записи истории поиска запчастей:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось удалить запись из истории поиска')
+      }
+    },
+
+    clearPartsSearchHistory: async (_: unknown, __: unknown, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Определяем clientId, убирая префикс client_ если он есть
+        const clientIdParts = actualContext.clientId.split('_')
+        let clientId = actualContext.clientId
+
+        if (clientIdParts.length >= 3) {
+          clientId = clientIdParts[1]
+        } else if (clientIdParts.length === 2) {
+          clientId = clientIdParts[1]
+        }
+
+        console.log('clearPartsSearchHistory: очистка истории для клиента', clientId)
+
+        const deleteResult = await prisma.partsSearchHistory.deleteMany({
+          where: { clientId }
+        })
+
+        console.log(`clearPartsSearchHistory: удалено ${deleteResult.count} записей`)
+        return true
+      } catch (error) {
+        console.error('Ошибка очистки истории поиска запчастей:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось очистить историю поиска')
+      }
+    },
+
+    createPartsSearchHistoryItem: async (_: unknown, { input }: { input: any }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Определяем clientId, убирая префикс client_ если он есть
+        const clientIdParts = actualContext.clientId.split('_')
+        let clientId = actualContext.clientId
+
+        if (clientIdParts.length >= 3) {
+          clientId = clientIdParts[1]
+        } else if (clientIdParts.length === 2) {
+          clientId = clientIdParts[1]
+        }
+
+        console.log('createPartsSearchHistoryItem: создание записи для клиента', clientId)
+
+        // Проверяем существует ли клиент
+        const client = await prisma.client.findUnique({
+          where: { id: clientId }
+        })
+
+        if (!client) {
+          throw new Error('Клиент не найден')
+        }
+
+        const historyItem = await prisma.partsSearchHistory.create({
+          data: {
+            clientId,
+            searchQuery: input.searchQuery,
+            searchType: input.searchType,
+            brand: input.brand,
+            articleNumber: input.articleNumber,
+            vehicleBrand: input.vehicleBrand,
+            vehicleModel: input.vehicleModel,
+            vehicleYear: input.vehicleYear,
+            resultCount: input.resultCount || 0
+          }
+        })
+
+        console.log('createPartsSearchHistoryItem: запись создана', historyItem.id)
+
+        return {
+          id: historyItem.id,
+          searchQuery: historyItem.searchQuery,
+          searchType: historyItem.searchType,
+          brand: historyItem.brand,
+          articleNumber: historyItem.articleNumber,
+          vehicleInfo: historyItem.vehicleBrand || historyItem.vehicleModel || historyItem.vehicleYear ? {
+            brand: historyItem.vehicleBrand,
+            model: historyItem.vehicleModel,
+            year: historyItem.vehicleYear
+          } : null,
+          resultCount: historyItem.resultCount,
+          createdAt: historyItem.createdAt.toISOString()
+        }
+      } catch (error) {
+        console.error('Ошибка создания записи истории поиска запчастей:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось создать запись истории поиска')
+      }
+    },
+
+        createVehicleFromVin: async (_: unknown, { vin, comment }: { vin: string; comment?: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        console.log('Создание автомобиля из VIN:', vin)
+
+        // Проверяем существует ли клиент, если нет - создаем только если это действительно новый клиент
+        let client = await prisma.client.findUnique({
+          where: { id: actualContext.clientId }
+        })
+
+        if (!client) {
+          // Проверяем, не является ли это токеном временного клиента
+          // Временные клиенты имеют длинные ID типа "client_cmbzedr1k0000rqz5phpvgpxc"
+          if (actualContext.clientId.startsWith('client_') && actualContext.clientId.length > 30) {
+            console.log('Создаем временного клиента:', actualContext.clientId)
+            client = await prisma.client.create({
+              data: {
+                id: actualContext.clientId,
+                clientNumber: `CLIENT_${Date.now()}`,
+                type: 'INDIVIDUAL',
+                name: 'Гость',
+                phone: '+7',
+                isConfirmed: false
+              }
+            })
+            console.log('Временный клиент создан:', client.id)
+          } else {
+            throw new Error('Клиент не найден в системе')
+          }
+        }
+
+         // Ищем автомобиль в Laximo
+         let laximoData: any[] = []
+         try {
+           laximoData = await laximoService.findVehicleGlobal(vin)
+           console.log('Данные из Laximo:', laximoData)
+         } catch (laximoError) {
+           console.log('Ошибка поиска в Laximo:', laximoError)
+           // Продолжаем выполнение, создадим автомобиль без данных Laximo
+         }
+
+         // Выбираем первый результат из Laximo или создаем базовые данные
+         let vehicleData = {
+           clientId: actualContext.clientId,
+           vin: vin.toUpperCase(),
+           comment: comment || '',
+           name: `Автомобиль ${vin}`,
+           brand: null as string | null,
+           model: null as string | null,
+           modification: null as string | null,
+           year: null as number | null
+         }
+
+         if (laximoData && laximoData.length > 0) {
+           const firstResult = laximoData[0]
+           vehicleData = {
+             ...vehicleData,
+             name: firstResult.name || `${firstResult.brand || ''} ${firstResult.model || ''}`.trim() || vehicleData.name,
+             brand: firstResult.brand || null,
+             model: firstResult.model || null,
+             modification: firstResult.modification || null,
+             year: firstResult.year ? parseInt(firstResult.year, 10) : null
+           }
+         }
+
+        const vehicle = await prisma.clientVehicle.create({
+          data: vehicleData
+        })
+
+        console.log('Автомобиль создан:', vehicle)
+        return vehicle
+      } catch (error) {
+        console.error('Ошибка создания автомобиля из VIN:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось создать автомобиль из VIN')
       }
     },
 

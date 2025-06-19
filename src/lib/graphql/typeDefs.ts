@@ -366,6 +366,47 @@ export const typeDefs = gql`
     comment: String
   }
 
+  # Типы для истории поиска запчастей
+  type PartsSearchHistoryItem {
+    id: ID!
+    searchQuery: String!
+    searchType: SearchType!
+    brand: String
+    articleNumber: String
+    vehicleInfo: VehicleInfo
+    resultCount: Int!
+    createdAt: DateTime!
+  }
+
+  type VehicleInfo {
+    brand: String
+    model: String
+    year: Int
+  }
+
+  type PartsSearchHistoryResponse {
+    items: [PartsSearchHistoryItem!]!
+    total: Int!
+    hasMore: Boolean!
+  }
+
+  enum SearchType {
+    TEXT
+    ARTICLE
+    OEM
+  }
+
+  input PartsSearchHistoryInput {
+    searchQuery: String!
+    searchType: SearchType!
+    brand: String
+    articleNumber: String
+    vehicleBrand: String
+    vehicleModel: String
+    vehicleYear: Int
+    resultCount: Int
+  }
+
   type ClientDeliveryAddress {
     id: ID!
     name: String!
@@ -804,6 +845,9 @@ export const typeDefs = gql`
     vehicleSearchHistory: [VehicleSearchHistory!]!
     searchVehicleByVin(vin: String!): VehicleSearchResult
     
+    # История поиска запчастей
+    partsSearchHistory(limit: Int, offset: Int): PartsSearchHistoryResponse!
+    
     # Данные авторизованного клиента
     clientMe: Client
     
@@ -991,6 +1035,14 @@ export const typeDefs = gql`
     deleteUserVehicle(id: ID!): Boolean!
     addVehicleFromSearch(vin: String!, comment: String): ClientVehicle!
     deleteSearchHistoryItem(id: ID!): Boolean!
+    createVehicleFromVin(vin: String!, comment: String): ClientVehicle!
+    
+    # История поиска запчастей
+    deletePartsSearchHistoryItem(id: ID!): Boolean!
+    clearPartsSearchHistory: Boolean!
+    
+    # Создание записи истории поиска (для тестирования)
+    createPartsSearchHistoryItem(input: PartsSearchHistoryInput!): PartsSearchHistoryItem!
     
     # Обновление данных авторизованного клиента
     updateClientMe(input: ClientInput!): Client!
