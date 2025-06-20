@@ -447,6 +447,10 @@ enum SearchType {
   TEXT     // Текстовый поиск
   ARTICLE  // Поиск по артикулу
   OEM      // Поиск по OEM номеру
+  VIN      // Поиск автомобиля по VIN/Frame
+  PLATE    // Поиск автомобиля по госномеру
+  WIZARD   // Поиск автомобиля по параметрам
+  PART_VEHICLES // Поиск автомобилей по артикулу детали
 }
 
 // Адреса доставки
@@ -458,6 +462,13 @@ model ClientDeliveryAddress {
   address      String      // Полный адрес
   deliveryType DeliveryType @default(COURIER)
   comment      String?
+  // Дополнительные поля для курьерской доставки
+  entrance     String?     // Подъезд
+  floor        String?     // Этаж
+  apartment    String?     // Квартира/офис
+  intercom     String?     // Домофон
+  deliveryTime String?     // Желаемое время доставки
+  contactPhone String?     // Контактный телефон
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 

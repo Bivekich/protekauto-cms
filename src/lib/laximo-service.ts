@@ -49,7 +49,9 @@ export interface LaximoCatalogInfo {
   supportparameteridentification2: boolean
   supportquickgroups: boolean
   supportvinsearch: boolean
+  supportplateidentification?: boolean
   vinexample?: string
+  plateexample?: string
   features: LaximoFeature[]
   permissions: string[]
 }
@@ -119,7 +121,10 @@ export interface LaximoUnit {
   name: string
   code?: string
   description?: string
+  imageurl?: string
+  largeimageurl?: string
   details?: LaximoDetail[]
+  attributes?: LaximoDetailAttribute[]
 }
 
 export interface LaximoDetail {
@@ -1358,7 +1363,9 @@ class LaximoService {
       supportparameteridentification2: getAttribute('supportparameteridentification2') === 'true',
       supportquickgroups: getAttribute('supportquickgroups') === 'true',
       supportvinsearch: getAttribute('supportvinsearch') === 'true',
+      supportplateidentification: getAttribute('supportplateidentification') === 'true' || undefined,
       vinexample: getAttribute('vinexample') || undefined,
+      plateexample: getAttribute('plateexample') || undefined,
       features,
       permissions
     }
@@ -2756,15 +2763,17 @@ export class LaximoUnitService extends LaximoService {
       console.log('🔍 Получаем информацию об узле:', unitId)
       console.log('📋 Параметры:', { catalogCode, vehicleId, unitId, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
       
-      // Используем ListUnits с фильтром по unitId для получения информации об узле
-      let command = `ListUnits:Locale=ru_RU|Catalog=${catalogCode}`
+      // Используем GetUnitInfo согласно документации Laximo
+      let command = `GetUnitInfo:Locale=ru_RU|Catalog=${catalogCode}|UnitId=${unitId}`
       
-      if (vehicleId) {
-        command += `|VehicleId=${vehicleId}`
-      }
       if (ssd && ssd.trim() !== '') {
         command += `|ssd=${ssd}`
+      } else {
+        command += `|ssd=`
       }
+      
+      // Включаем локализацию для получения переведенных названий параметров
+      command += `|Localized=true`
       
       const hmac = this.createHMAC(command)
       
@@ -2782,18 +2791,37 @@ export class LaximoUnitService extends LaximoService {
   }
 
   /**
-   * Получает детали узла (временная заглушка - возвращает пустой массив)
+   * Получает детали узла используя ListDetailByUnit API
    */
   async getUnitDetails(catalogCode: string, vehicleId: string, unitId: string, ssd?: string): Promise<LaximoDetail[]> {
     try {
-      console.log('🔍 Получаем детали узла (заглушка):', unitId)
+      console.log('🔍 Получаем детали узла:', unitId)
       console.log('📋 Параметры:', { catalogCode, vehicleId, unitId, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
       
-      // Временная заглушка - возвращаем пустой массив
-      // TODO: Реализовать правильную команду Laximo API для получения деталей узла
-      console.log('⚠️ Временная заглушка - детали узла не загружаются')
+      // Используем ListDetailByUnit согласно документации Laximo
+      let command = `ListDetailByUnit:Locale=ru_RU|Catalog=${catalogCode}|UnitId=${unitId}`
       
-      return []
+      if (ssd && ssd.trim() !== '') {
+        command += `|ssd=${ssd}`
+      } else {
+        command += `|ssd=`
+      }
+      
+      // Включаем локализацию для получения переведенных названий параметров
+      command += `|Localized=true`
+      
+      // Включаем связанные объекты для получения дополнительной информации
+      command += `|WithLinks=true`
+      
+      const hmac = this.createHMAC(command)
+      
+      console.log('📝 ListDetailByUnit Command:', command)
+      console.log('🔗 HMAC:', hmac)
+      
+      const soapEnvelope = this.createSOAP11Envelope(command, this.login, hmac)
+      const xmlText = await this.makeBasicSOAPRequest(this.soap11Url, soapEnvelope, 'urn:QueryDataLogin')
+      
+      return this.parseUnitDetailsResponse(xmlText)
     } catch (error) {
       console.error('Ошибка получения деталей узла:', error)
       return []
@@ -2801,18 +2829,31 @@ export class LaximoUnitService extends LaximoService {
   }
 
   /**
-   * Получает карту изображений узла с координатами (временная заглушка)
+   * Получает карту изображений узла с координатами используя ListImageMapByUnit API
    */
   async getUnitImageMap(catalogCode: string, vehicleId: string, unitId: string, ssd?: string): Promise<LaximoUnitImageMap | null> {
     try {
-      console.log('🔍 Получаем карту изображений узла (заглушка):', unitId)
+      console.log('🔍 Получаем карту изображений узла:', unitId)
       console.log('📋 Параметры:', { catalogCode, vehicleId, unitId, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
       
-      // Временная заглушка - возвращаем null
-      // TODO: Реализовать правильную команду Laximo API для получения карты изображений
-      console.log('⚠️ Временная заглушка - карта изображений не загружается')
+      // Используем ListImageMapByUnit согласно документации Laximo
+      let command = `ListImageMapByUnit:Catalog=${catalogCode}|UnitId=${unitId}`
       
-      return null
+      if (ssd && ssd.trim() !== '') {
+        command += `|ssd=${ssd}`
+      } else {
+        command += `|ssd=`
+      }
+      
+      const hmac = this.createHMAC(command)
+      
+      console.log('📝 ListImageMapByUnit Command:', command)
+      console.log('🔗 HMAC:', hmac)
+      
+      const soapEnvelope = this.createSOAP11Envelope(command, this.login, hmac)
+      const xmlText = await this.makeBasicSOAPRequest(this.soap11Url, soapEnvelope, 'urn:QueryDataLogin')
+      
+      return this.parseUnitImageMapResponse(xmlText, unitId)
     } catch (error) {
       console.error('Ошибка получения карты изображений узла:', error)
       return null
@@ -2820,7 +2861,7 @@ export class LaximoUnitService extends LaximoService {
   }
 
   /**
-   * Парсит ответ с информацией об узле
+   * Парсит ответ GetUnitInfo с информацией об узле
    */
   private parseUnitInfoResponse(xmlText: string, unitId: string): LaximoUnit | null {
     console.log('🔍 Парсим информацию об узле...')
@@ -2831,50 +2872,67 @@ export class LaximoUnitService extends LaximoService {
       return null
     }
 
-    // Ищем секцию ListUnits
-    const unitsMatch = resultData.match(/<ListUnits?[^>]*>([\s\S]*?)<\/ListUnits?>/) ||
-                       resultData.match(/<response[^>]*>([\s\S]*?)<\/response>/)
+    // Ищем секцию GetUnitInfo
+    const unitInfoMatch = resultData.match(/<GetUnitInfo[^>]*>([\s\S]*?)<\/GetUnitInfo>/) ||
+                         resultData.match(/<response[^>]*>([\s\S]*?)<\/response>/)
     
-    if (!unitsMatch) {
-      console.log('❌ Не найдена секция ListUnits')
+    if (!unitInfoMatch) {
+      console.log('❌ Не найдена секция GetUnitInfo')
       return null
     }
 
     const rowPattern = /<row([^>]*?)(?:\s*\/>|>([\s\S]*?)<\/row>)/g
-    let match
+    const match = rowPattern.exec(unitInfoMatch[1])
     
-    while ((match = rowPattern.exec(unitsMatch[1])) !== null) {
-      const attributes = match[1]
-      const content = match[2] || ''
-      
-      // Извлекаем атрибуты
-      const currentUnitId = this.extractAttribute(attributes, 'unitid') || this.extractAttribute(attributes, 'id')
-      
-      if (currentUnitId === unitId) {
-        const name = this.extractAttribute(attributes, 'name') || this.extractAttribute(attributes, 'description')
-        const code = this.extractAttribute(attributes, 'code')
-        const imageurl = this.extractAttribute(attributes, 'imageurl')
-        const largeimageurl = this.extractAttribute(attributes, 'largeimageurl')
-        const note = this.extractAttribute(attributes, 'note')
-        
-        console.log('📦 Найдена информация об узле:', { unitId: currentUnitId, name, code })
-        
-        return {
-          unitid: currentUnitId,
-          name: name || '',
-          code: code || '',
-          description: note || '',
-          details: [] // Детали загружаются отдельно
-        }
-      }
+    if (!match) {
+      console.log('❌ Не найдена строка с данными узла')
+      return null
     }
     
-    console.log('❌ Узел не найден:', unitId)
-    return null
+    const attributes = match[1]
+    const content = match[2] || ''
+    
+    // Извлекаем атрибуты согласно документации GetUnitInfo
+    const name = this.extractAttribute(attributes, 'name')
+    const code = this.extractAttribute(attributes, 'code')
+    const imageurl = this.extractAttribute(attributes, 'imageurl')
+    const largeimageurl = this.extractAttribute(attributes, 'largeimageurl')
+    const currentUnitId = this.extractAttribute(attributes, 'unitid')
+    
+    // Извлекаем атрибуты из содержимого
+    const attributePattern = /<attribute\s+key="([^"]*?)"\s+name="([^"]*?)"\s+value="([^"]*?)"\s*\/?>/g
+    const unitAttributes: LaximoDetailAttribute[] = []
+    let attrMatch
+    
+    while ((attrMatch = attributePattern.exec(content)) !== null) {
+      unitAttributes.push({
+        key: attrMatch[1],
+        name: attrMatch[2],
+        value: attrMatch[3]
+      })
+    }
+    
+    // Ищем примечание в атрибутах
+    const noteAttribute = unitAttributes.find(attr => attr.key === 'note')
+    const description = noteAttribute?.value || ''
+    
+    console.log('📦 Найдена информация об узле:', { unitId: currentUnitId, name, code, imageurl })
+    console.log('📋 Атрибуты узла:', unitAttributes)
+    
+    return {
+      unitid: currentUnitId || unitId,
+      name: name || '',
+      code: code || '',
+      description: description,
+      imageurl: imageurl || undefined,
+      largeimageurl: largeimageurl || undefined,
+      details: [], // Детали загружаются отдельно
+      attributes: unitAttributes
+    }
   }
 
   /**
-   * Парсит ответ с деталями узла
+   * Парсит ответ ListDetailByUnit с деталями узла
    */
   private parseUnitDetailsResponse(xmlText: string): LaximoDetail[] {
     console.log('🔍 Парсим детали узла...')
@@ -2885,12 +2943,12 @@ export class LaximoUnitService extends LaximoService {
       return []
     }
 
-    // Ищем секцию ListDetails
-    const detailsMatch = resultData.match(/<ListDetails?[^>]*>([\s\S]*?)<\/ListDetails?>/) ||
+    // Ищем секцию ListDetailsByUnit
+    const detailsMatch = resultData.match(/<ListDetailsByUnit[^>]*>([\s\S]*?)<\/ListDetailsByUnit>/) ||
                         resultData.match(/<response[^>]*>([\s\S]*?)<\/response>/)
     
     if (!detailsMatch) {
-      console.log('❌ Не найдена секция ListDetails')
+      console.log('❌ Не найдена секция ListDetailsByUnit')
       return []
     }
 
@@ -2902,27 +2960,55 @@ export class LaximoUnitService extends LaximoService {
       const attributes = match[1]
       const content = match[2] || ''
       
-      // Извлекаем атрибуты детали
-      const detailid = this.extractAttribute(attributes, 'detailid') || this.extractAttribute(attributes, 'id')
-      const name = this.extractAttribute(attributes, 'name') || this.extractAttribute(attributes, 'description')
-      const oem = this.extractAttribute(attributes, 'oem') || this.extractAttribute(attributes, 'partnumber')
-      const brand = this.extractAttribute(attributes, 'brand') || this.extractAttribute(attributes, 'manufacturer')
-      const description = this.extractAttribute(attributes, 'description') || this.extractAttribute(attributes, 'note')
-      const applicablemodels = this.extractAttribute(attributes, 'applicablemodels')
-      const note = this.extractAttribute(attributes, 'note')
+      // Извлекаем атрибуты детали согласно документации ListDetailByUnit
+      const codeonimage = this.extractAttribute(attributes, 'codeonimage')
+      const name = this.extractAttribute(attributes, 'name')
+      const oem = this.extractAttribute(attributes, 'oem')
+      const ssd = this.extractAttribute(attributes, 'ssd')
       
-      if (detailid && name && oem) {
+      // Дополнительные атрибуты
+      const note = this.extractAttribute(attributes, 'note')
+      const filter = this.extractAttribute(attributes, 'filter')
+      const flag = this.extractAttribute(attributes, 'flag')
+      const match_attr = this.extractAttribute(attributes, 'match')
+      const designation = this.extractAttribute(attributes, 'designation')
+      const applicablemodels = this.extractAttribute(attributes, 'applicablemodels')
+      const partspec = this.extractAttribute(attributes, 'partspec')
+      const color = this.extractAttribute(attributes, 'color')
+      const shape = this.extractAttribute(attributes, 'shape')
+      const standard = this.extractAttribute(attributes, 'standard')
+      const material = this.extractAttribute(attributes, 'material')
+      const size = this.extractAttribute(attributes, 'size')
+      const featuredescription = this.extractAttribute(attributes, 'featuredescription')
+      const prodstart = this.extractAttribute(attributes, 'prodstart')
+      const prodend = this.extractAttribute(attributes, 'prodend')
+      
+      // Извлекаем атрибуты из содержимого
+      const attributePattern = /<attribute\s+key="([^"]*?)"\s+name="([^"]*?)"\s+value="([^"]*?)"\s*\/?>/g
+      const detailAttributes: LaximoDetailAttribute[] = []
+      let attrMatch
+      
+      while ((attrMatch = attributePattern.exec(content)) !== null) {
+        detailAttributes.push({
+          key: attrMatch[1],
+          name: attrMatch[2],
+          value: attrMatch[3]
+        })
+      }
+      
+      if (codeonimage && name && oem) {
         const detail: LaximoDetail = {
-          detailid,
+          detailid: codeonimage, // Используем codeonimage как detailid
           name,
           oem,
-          brand: brand || '',
-          description: description || '',
+          brand: '', // Бренд не указан в ListDetailByUnit
+          description: note || '',
           applicablemodels: applicablemodels || '',
-          note: note || ''
+          note: note || '',
+          attributes: detailAttributes
         }
         
-        console.log('📦 Найдена деталь узла:', { detailid, name, oem, brand })
+        console.log('📦 Найдена деталь узла:', { codeonimage, name, oem, note })
         details.push(detail)
       }
     }
@@ -2932,7 +3018,7 @@ export class LaximoUnitService extends LaximoService {
   }
 
   /**
-   * Парсит ответ с картой изображений узла
+   * Парсит ответ ListImageMapByUnit с картой изображений узла
    */
   private parseUnitImageMapResponse(xmlText: string, unitId: string): LaximoUnitImageMap | null {
     console.log('🔍 Парсим карту изображений узла...')
@@ -2943,55 +3029,52 @@ export class LaximoUnitService extends LaximoService {
       return null
     }
 
-    // Ищем секцию GetImageMap
-    const imageMapMatch = resultData.match(/<GetImageMap?[^>]*>([\s\S]*?)<\/GetImageMap?>/) ||
+    // Ищем секцию ListImageMapByUnit
+    const imageMapMatch = resultData.match(/<ListImageMapByUnit[^>]*>([\s\S]*?)<\/ListImageMapByUnit>/) ||
                          resultData.match(/<response[^>]*>([\s\S]*?)<\/response>/)
     
     if (!imageMapMatch) {
-      console.log('❌ Не найдена секция GetImageMap')
+      console.log('❌ Не найдена секция ListImageMapByUnit')
       return null
     }
 
-    // Извлекаем основную информацию об изображении
-    const imageurl = this.extractAttribute(imageMapMatch[1], 'imageurl') || ''
-    const largeimageurl = this.extractAttribute(imageMapMatch[1], 'largeimageurl') || imageurl
-    
     const coordinates: LaximoImageCoordinate[] = []
-    const coordPattern = /<coordinate([^>]*?)(?:\s*\/>|>([\s\S]*?)<\/coordinate>)/g
+    const rowPattern = /<row([^>]*?)(?:\s*\/>|>([\s\S]*?)<\/row>)/g
     let match
     
-    while ((match = coordPattern.exec(imageMapMatch[1])) !== null) {
+    while ((match = rowPattern.exec(imageMapMatch[1])) !== null) {
       const attributes = match[1]
       
-      const detailid = this.extractAttribute(attributes, 'detailid')
-      const codeonimage = this.extractAttribute(attributes, 'codeonimage')
-      const x = parseInt(this.extractAttribute(attributes, 'x') || '0')
-      const y = parseInt(this.extractAttribute(attributes, 'y') || '0')
-      const width = parseInt(this.extractAttribute(attributes, 'width') || '0')
-      const height = parseInt(this.extractAttribute(attributes, 'height') || '0')
-      const shape = this.extractAttribute(attributes, 'shape') || 'rect'
+      // Извлекаем атрибуты согласно документации ListImageMapByUnit
+      const code = this.extractAttribute(attributes, 'code')
+      const type = this.extractAttribute(attributes, 'type')
+      const x1 = parseInt(this.extractAttribute(attributes, 'x1') || '0')
+      const y1 = parseInt(this.extractAttribute(attributes, 'y1') || '0')
+      const x2 = parseInt(this.extractAttribute(attributes, 'x2') || '0')
+      const y2 = parseInt(this.extractAttribute(attributes, 'y2') || '0')
       
-      if (detailid && codeonimage) {
+      if (code) {
         coordinates.push({
-          detailid,
-          codeonimage,
-          x,
-          y,
-          width,
-          height,
-          shape
+          detailid: code, // Используем code как detailid
+          codeonimage: code,
+          x: x1,
+          y: y1,
+          width: x2 - x1,
+          height: y2 - y1,
+          shape: type === '0' ? 'rect' : 'circle' // Предполагаем, что type=0 это прямоугольник
         })
         
-        console.log('📦 Найдена координата:', { detailid, codeonimage, x, y })
+        console.log('📦 Найдена координата:', { code, type, x1, y1, x2, y2 })
       }
     }
     
     console.log(`✅ Обработано ${coordinates.length} координат изображения`)
     
+    // Для ListImageMapByUnit изображение получается из GetUnitInfo
     return {
       unitid: unitId,
-      imageurl,
-      largeimageurl,
+      imageurl: '', // Изображение берется из GetUnitInfo
+      largeimageurl: '',
       coordinates
     }
   }

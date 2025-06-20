@@ -1,4 +1,5 @@
 import { prisma } from '../prisma'
+import { SearchType } from '../../generated/prisma'
 import { createToken, comparePasswords, hashPassword } from '../auth'
 import { createAuditLog, AuditAction, getClientInfo } from '../audit'
 import { uploadBuffer, generateFileKey } from '../s3'
@@ -8,6 +9,7 @@ import { laximoService, laximoDocService, laximoUnitService } from '../laximo-se
 import { autoEuroService } from '../autoeuro-service'
 import { yooKassaService } from '../yookassa-service'
 import { partsAPIService } from '../partsapi-service'
+import { yandexDeliveryService, YandexPickupPoint, getAddressSuggestions } from '../yandex-delivery-service'
 import * as csvWriter from 'csv-writer'
 import * as XLSX from 'xlsx'
 
@@ -58,11 +60,11 @@ interface Context {
   headers?: Headers
 }
 
-// Функция для сохранения истории поиска запчастей
+// Функция для сохранения истории поиска запчастей и автомобилей
 const saveSearchHistory = async (
   context: Context, 
   searchQuery: string, 
-  searchType: 'TEXT' | 'ARTICLE' | 'OEM', 
+  searchType: SearchType, 
   brand?: string, 
   articleNumber?: string,
   vehicleInfo?: { brand?: string; model?: string; year?: number },
@@ -267,6 +269,13 @@ interface ClientDeliveryAddressInput {
   address: string
   deliveryType: 'COURIER' | 'PICKUP' | 'POST' | 'TRANSPORT'
   comment?: string
+  // Дополнительные поля для курьерской доставки
+  entrance?: string
+  floor?: string
+  apartment?: string
+  intercom?: string
+  deliveryTime?: string
+  contactPhone?: string
 }
 
 interface ClientContactInput {
@@ -437,7 +446,16 @@ function getContext(): Context {
 
 export const resolvers = {
   DateTime: {
-    serialize: (date: Date) => date.toISOString(),
+    serialize: (date: Date | string) => {
+      if (typeof date === 'string') {
+        return date;
+      }
+      if (date instanceof Date) {
+        return date.toISOString();
+      }
+      console.warn('DateTime serialize: неожиданный тип данных:', typeof date, date);
+      return new Date(date).toISOString();
+    },
     parseValue: (value: string) => new Date(value),
     parseLiteral: (ast: { value: string }) => new Date(ast.value),
   },
@@ -1028,13 +1046,61 @@ export const resolvers = {
       }
     },
 
-    vehicleSearchHistory: async () => {
+    vehicleSearchHistory: async (_: unknown, args: unknown, context: Context) => {
       try {
-        // Временная заглушка - возвращаем пустой массив
-        // В будущем здесь будет реальная логика поиска истории
-        return []
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          // Для неавторизованных пользователей возвращаем пустую историю
+          return []
+        }
+
+        // Определяем clientId, убирая префикс client_ если он есть
+        const clientIdParts = actualContext.clientId.split('_')
+        let clientId = actualContext.clientId
+
+        if (clientIdParts.length >= 3) {
+          clientId = clientIdParts[1] // client_ID_timestamp -> ID
+        } else if (clientIdParts.length === 2) {
+          clientId = clientIdParts[1] // client_ID -> ID
+        }
+
+        console.log('vehicleSearchHistory: получение VIN истории для клиента:', clientId)
+
+        // Проверяем существует ли клиент
+        const client = await prisma.client.findUnique({
+          where: { id: clientId }
+        })
+
+        if (!client) {
+          console.log('vehicleSearchHistory: клиент не найден:', clientId)
+          return []
+        }
+
+        // Получаем записи истории только с типом VIN
+        const vinHistoryItems = await prisma.partsSearchHistory.findMany({
+          where: { 
+            clientId,
+            searchType: 'VIN' // Фильтруем только VIN запросы
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 20 // Ограничиваем количество записей
+        })
+
+        console.log(`vehicleSearchHistory: найдено ${vinHistoryItems.length} VIN записей`)
+
+        // Преобразуем данные в формат VehicleSearchHistory
+        const historyItems = vinHistoryItems.map(item => ({
+          id: item.id,
+          vin: item.searchQuery, // VIN записан в searchQuery
+          brand: item.vehicleBrand || item.brand,
+          model: item.vehicleModel,
+          searchDate: item.createdAt instanceof Date ? item.createdAt.toISOString() : item.createdAt,
+          searchQuery: item.searchQuery
+        }))
+
+        return historyItems
       } catch (error) {
-        console.error('Ошибка получения истории поиска:', error)
+        console.error('Ошибка получения истории VIN поиска:', error)
         throw new Error('Не удалось получить историю поиска')
       }
     },
@@ -1112,7 +1178,7 @@ export const resolvers = {
             year: item.vehicleYear
           } : null,
           resultCount: item.resultCount,
-          createdAt: item.createdAt.toISOString()
+          createdAt: item.createdAt instanceof Date ? item.createdAt.toISOString() : item.createdAt
         }))
 
         return {
@@ -1278,44 +1344,148 @@ export const resolvers = {
       }
     },
 
-    laximoFindVehicle: async (_: unknown, { catalogCode, vin }: { catalogCode: string; vin: string }) => {
+    laximoFindVehicle: async (_: unknown, { catalogCode, vin }: { catalogCode: string; vin: string }, context: Context) => {
       try {
         // Если catalogCode пустой, делаем глобальный поиск
         if (!catalogCode || catalogCode.trim() === '') {
           console.log('🌍 Глобальный поиск автомобиля по VIN/Frame:', vin)
-          return await laximoService.findVehicleGlobal(vin)
+          const result = await laximoService.findVehicleGlobal(vin)
+          
+          // Сохраняем в историю поиска с информацией о первом найденном автомобиле
+          let vehicleInfo: { brand?: string; model?: string; year?: number } | undefined = undefined
+          if (result && result.length > 0) {
+            const firstVehicle = result[0]
+            vehicleInfo = {
+              brand: firstVehicle.brand,
+              model: firstVehicle.model,
+              year: firstVehicle.year ? parseInt(firstVehicle.year, 10) : undefined
+            }
+          }
+          
+          await saveSearchHistory(
+            context,
+            vin,
+            'VIN',
+            undefined,
+            undefined,
+            vehicleInfo,
+            result.length
+          )
+          
+          return result
         }
         
-        return await laximoService.findVehicle(catalogCode, vin)
+        const result = await laximoService.findVehicle(catalogCode, vin)
+        
+        // Сохраняем в историю поиска с информацией о первом найденном автомобиле
+        let vehicleInfo: { brand?: string; model?: string; year?: number } | undefined = undefined
+        if (result && result.length > 0) {
+          const firstVehicle = result[0]
+          vehicleInfo = {
+            brand: firstVehicle.brand,
+            model: firstVehicle.model,
+            year: firstVehicle.year ? parseInt(firstVehicle.year, 10) : undefined
+          }
+        }
+        
+        await saveSearchHistory(
+          context,
+          vin,
+          'VIN',
+          catalogCode,
+          undefined,
+          vehicleInfo,
+          result.length
+        )
+        
+        return result
       } catch (error) {
         console.error('Ошибка поиска автомобиля по VIN:', error)
         return []
       }
     },
 
-    laximoFindVehicleByWizard: async (_: unknown, { catalogCode, ssd }: { catalogCode: string; ssd: string }) => {
+    laximoFindVehicleByWizard: async (_: unknown, { catalogCode, ssd }: { catalogCode: string; ssd: string }, context: Context) => {
       try {
-        return await laximoService.findVehicleByWizard(catalogCode, ssd)
+        const result = await laximoService.findVehicleByWizard(catalogCode, ssd)
+        
+        // Сохраняем в историю поиска
+        await saveSearchHistory(
+          context,
+          `Поиск по параметрам в ${catalogCode}`,
+          'WIZARD',
+          catalogCode,
+          undefined,
+          undefined,
+          result.length
+        )
+        
+        return result
       } catch (error) {
         console.error('Ошибка поиска автомобиля по wizard:', error)
         return []
       }
     },
 
-    laximoFindVehicleByPlate: async (_: unknown, { catalogCode, plateNumber }: { catalogCode: string; plateNumber: string }) => {
+    laximoFindVehicleByPlate: async (_: unknown, { catalogCode, plateNumber }: { catalogCode: string; plateNumber: string }, context: Context) => {
       try {
-        return await laximoService.findVehicleByPlateNumber(catalogCode, plateNumber)
+        const result = await laximoService.findVehicleByPlateNumber(catalogCode, plateNumber)
+        
+        // Сохраняем в историю поиска с информацией о первом найденном автомобиле
+        let vehicleInfo: { brand?: string; model?: string; year?: number } | undefined = undefined
+        if (result && result.length > 0) {
+          const firstVehicle = result[0]
+          vehicleInfo = {
+            brand: firstVehicle.brand,
+            model: firstVehicle.model,
+            year: firstVehicle.year ? parseInt(firstVehicle.year, 10) : undefined
+          }
+        }
+        
+        await saveSearchHistory(
+          context,
+          plateNumber,
+          'PLATE',
+          catalogCode,
+          undefined,
+          vehicleInfo,
+          result.length
+        )
+        
+        return result
       } catch (error) {
         console.error('Ошибка поиска автомобиля по госномеру:', error)
         return []
       }
     },
 
-    laximoFindVehicleByPlateGlobal: async (_: unknown, { plateNumber }: { plateNumber: string }) => {
+    laximoFindVehicleByPlateGlobal: async (_: unknown, { plateNumber }: { plateNumber: string }, context: Context) => {
       try {
         console.log('🔍 GraphQL Resolver - Глобальный поиск автомобиля по госномеру:', plateNumber)
         const result = await laximoService.findVehicleByPlateNumberGlobal(plateNumber)
         console.log('📋 Результат глобального поиска по госномеру:', result ? `найдено ${result.length} автомобилей` : 'результат пустой')
+        
+        // Сохраняем в историю поиска с информацией о первом найденном автомобиле
+        let vehicleInfo: { brand?: string; model?: string; year?: number } | undefined = undefined
+        if (result && result.length > 0) {
+          const firstVehicle = result[0]
+          vehicleInfo = {
+            brand: firstVehicle.brand,
+            model: firstVehicle.model,
+            year: firstVehicle.year ? parseInt(firstVehicle.year, 10) : undefined
+          }
+        }
+        
+        await saveSearchHistory(
+          context,
+          plateNumber,
+          'PLATE',
+          undefined,
+          undefined,
+          vehicleInfo,
+          result.length
+        )
+        
         return result
       } catch (error) {
         console.error('❌ Ошибка глобального поиска автомобиля по госномеру:', error)
@@ -1332,9 +1502,22 @@ export const resolvers = {
       }
     },
 
-    laximoFindApplicableVehicles: async (_: unknown, { catalogCode, partNumber }: { catalogCode: string; partNumber: string }) => {
+    laximoFindApplicableVehicles: async (_: unknown, { catalogCode, partNumber }: { catalogCode: string; partNumber: string }, context: Context) => {
       try {
-        return await laximoService.findApplicableVehicles(catalogCode, partNumber)
+        const result = await laximoService.findApplicableVehicles(catalogCode, partNumber)
+        
+        // Сохраняем в историю поиска
+        await saveSearchHistory(
+          context,
+          partNumber,
+          'PART_VEHICLES',
+          catalogCode,
+          partNumber,
+          undefined,
+          result.length
+        )
+        
+        return result
       } catch (error) {
         console.error('Ошибка поиска автомобилей по артикулу:', error)
         return []
@@ -2098,6 +2281,245 @@ export const resolvers = {
       } catch (error) {
         console.error('Ошибка получения платежа:', error)
         throw new Error('Не удалось получить платеж')
+      }
+    },
+
+    // Резолверы для Яндекс доставки
+    yandexDetectLocation: async (_: unknown, { location }: { location: string }) => {
+      try {
+        const response = await yandexDeliveryService.detectLocation(location)
+        return response.variants.map(variant => ({
+          address: variant.address,
+          geoId: variant.geo_id
+        }))
+      } catch (error) {
+        console.error('Ошибка определения местоположения:', error)
+        throw new Error('Не удалось определить местоположение')
+      }
+    },
+
+    yandexPickupPoints: async (_: unknown, { filters }: { filters?: any }) => {
+      try {
+        const request: any = {}
+        
+        if (filters) {
+          if (filters.geoId) request.geo_id = filters.geoId
+          if (filters.latitude && filters.longitude) {
+            const radiusKm = filters.radiusKm || 10
+            const radiusDegrees = radiusKm / 111
+            
+            request.latitude = {
+              from: filters.latitude - radiusDegrees,
+              to: filters.latitude + radiusDegrees
+            }
+            request.longitude = {
+              from: filters.longitude - radiusDegrees,
+              to: filters.longitude + radiusDegrees
+            }
+          }
+          if (filters.isYandexBranded !== undefined) request.is_yandex_branded = filters.isYandexBranded
+          if (filters.isPostOffice !== undefined) request.is_post_office = filters.isPostOffice
+          if (filters.type) request.type = filters.type
+        }
+
+        const response = await yandexDeliveryService.getPickupPoints(request)
+        
+        return response.points.map((point: YandexPickupPoint) => ({
+          id: point.id,
+          name: point.name,
+          address: {
+            fullAddress: point.address.full_address,
+            locality: point.address.locality,
+            street: point.address.street,
+            house: point.address.house,
+            building: point.address.building,
+            apartment: point.address.apartment,
+            postalCode: point.address.postal_code,
+            comment: point.address.comment
+          },
+          contact: {
+            phone: point.contact.phone,
+            email: point.contact.email,
+            firstName: point.contact.first_name,
+            lastName: point.contact.last_name
+          },
+          position: {
+            latitude: point.position.latitude,
+            longitude: point.position.longitude
+          },
+          schedule: {
+            restrictions: point.schedule.restrictions.map(restriction => ({
+              days: restriction.days,
+              timeFrom: {
+                hours: restriction.time_from.hours,
+                minutes: restriction.time_from.minutes
+              },
+              timeTo: {
+                hours: restriction.time_to.hours,
+                minutes: restriction.time_to.minutes
+              }
+            })),
+            timeZone: point.schedule.time_zone
+          },
+          type: point.type,
+          paymentMethods: point.payment_methods,
+          instruction: point.instruction,
+          isDarkStore: point.is_dark_store || false,
+          isMarketPartner: point.is_market_partner || false,
+          isPostOffice: point.is_post_office || false,
+          isYandexBranded: point.is_yandex_branded || false,
+          formattedSchedule: yandexDeliveryService.formatSchedule(point.schedule),
+          typeLabel: yandexDeliveryService.getTypeLabel(point.type)
+        }))
+      } catch (error) {
+        console.error('Ошибка получения ПВЗ:', error)
+        throw new Error('Не удалось получить список ПВЗ')
+      }
+    },
+
+    yandexPickupPointsByCity: async (_: unknown, { cityName }: { cityName: string }) => {
+      try {
+        console.log('Запрос ПВЗ для города:', cityName)
+        const points = await yandexDeliveryService.getPickupPointsByCity(cityName)
+        console.log('Получено ПВЗ:', points.length)
+        if (points.length > 0) {
+          console.log('Первый ПВЗ:', JSON.stringify(points[0], null, 2))
+        }
+        
+        // Если ПВЗ не найдены, возвращаем пустой массив
+        if (points.length === 0) {
+          console.log(`ПВЗ в городе "${cityName}" не найдены`)
+          return [];
+        }
+        
+        return points.map(point => ({
+          id: point.id,
+          name: point.name,
+          address: {
+            fullAddress: point.address.full_address,
+            locality: point.address.locality,
+            street: point.address.street,
+            house: point.address.house,
+            building: point.address.building,
+            apartment: point.address.apartment,
+            postalCode: point.address.postal_code,
+            comment: point.address.comment
+          },
+          contact: {
+            phone: point.contact.phone,
+            email: point.contact.email,
+            firstName: point.contact.first_name,
+            lastName: point.contact.last_name
+          },
+          position: {
+            latitude: point.position.latitude,
+            longitude: point.position.longitude
+          },
+          schedule: {
+            restrictions: point.schedule.restrictions.map(restriction => ({
+              days: restriction.days,
+              timeFrom: {
+                hours: restriction.time_from.hours,
+                minutes: restriction.time_from.minutes
+              },
+              timeTo: {
+                hours: restriction.time_to.hours,
+                minutes: restriction.time_to.minutes
+              }
+            })),
+            timeZone: point.schedule.time_zone
+          },
+          type: point.type,
+          paymentMethods: point.payment_methods,
+          instruction: point.instruction,
+          isDarkStore: point.is_dark_store || false,
+          isMarketPartner: point.is_market_partner || false,
+          isPostOffice: point.is_post_office || false,
+          isYandexBranded: point.is_yandex_branded || false,
+          formattedSchedule: yandexDeliveryService.formatSchedule(point.schedule),
+          typeLabel: yandexDeliveryService.getTypeLabel(point.type)
+        }))
+      } catch (error) {
+        console.error('Ошибка получения ПВЗ по городу:', error)
+        throw new Error('Не удалось получить ПВЗ для указанного города')
+      }
+    },
+
+    yandexPickupPointsByCoordinates: async (_: unknown, { latitude, longitude, radiusKm }: { latitude: number; longitude: number; radiusKm?: number }) => {
+      try {
+        console.log('Запрос ПВЗ по координатам:', latitude, longitude, radiusKm)
+        const points = await yandexDeliveryService.getPickupPointsByCoordinates(latitude, longitude, radiusKm)
+        console.log('Получено ПВЗ по координатам:', points.length)
+        
+        // Если ПВЗ не найдены, возвращаем пустой массив
+        if (points.length === 0) {
+          console.log(`ПВЗ по координатам ${latitude}, ${longitude} не найдены`)
+          return [];
+        }
+        
+        return points.map(point => ({
+          id: point.id,
+          name: point.name,
+          address: {
+            fullAddress: point.address.full_address,
+            locality: point.address.locality,
+            street: point.address.street,
+            house: point.address.house,
+            building: point.address.building,
+            apartment: point.address.apartment,
+            postalCode: point.address.postal_code,
+            comment: point.address.comment
+          },
+          contact: {
+            phone: point.contact.phone,
+            email: point.contact.email,
+            firstName: point.contact.first_name,
+            lastName: point.contact.last_name
+          },
+          position: {
+            latitude: point.position.latitude,
+            longitude: point.position.longitude
+          },
+          schedule: {
+            restrictions: point.schedule.restrictions.map(restriction => ({
+              days: restriction.days,
+              timeFrom: {
+                hours: restriction.time_from.hours,
+                minutes: restriction.time_from.minutes
+              },
+              timeTo: {
+                hours: restriction.time_to.hours,
+                minutes: restriction.time_to.minutes
+              }
+            })),
+            timeZone: point.schedule.time_zone
+          },
+          type: point.type,
+          paymentMethods: point.payment_methods,
+          instruction: point.instruction,
+          isDarkStore: point.is_dark_store || false,
+          isMarketPartner: point.is_market_partner || false,
+          isPostOffice: point.is_post_office || false,
+          isYandexBranded: point.is_yandex_branded || false,
+          formattedSchedule: yandexDeliveryService.formatSchedule(point.schedule),
+          typeLabel: yandexDeliveryService.getTypeLabel(point.type)
+        }))
+      } catch (error) {
+        console.error('Ошибка получения ПВЗ по координатам:', error)
+        throw new Error('Не удалось получить ПВЗ по координатам')
+      }
+    },
+
+    // Автокомплит адресов
+    addressSuggestions: async (_: unknown, { query }: { query: string }) => {
+      try {
+        console.log('Запрос автокомплита адресов:', query)
+        const suggestions = await getAddressSuggestions(query)
+        console.log('Получено предложений:', suggestions.length)
+        return suggestions
+      } catch (error) {
+        console.error('Ошибка получения предложений адресов:', error)
+        return []
       }
     }
   },
@@ -3308,8 +3730,8 @@ export const resolvers = {
             `${opt.option.name}: ${opt.optionValue.value} (+${opt.optionValue.price}₽)`
           ).join('; '),
           videoUrl: product.videoUrl || '',
-          createdAt: product.createdAt.toISOString(),
-          updatedAt: product.updatedAt.toISOString()
+          createdAt: product.createdAt instanceof Date ? product.createdAt.toISOString() : product.createdAt,
+          updatedAt: product.updatedAt instanceof Date ? product.updatedAt.toISOString() : product.updatedAt
         }))
 
         // Создаем CSV строку
@@ -3921,7 +4343,7 @@ export const resolvers = {
           vehicles: client.vehicles.map(v => 
             `${v.brand || ''} ${v.model || ''} (${v.licensePlate || v.vin || v.frame || ''})`
           ).join('; '),
-          createdAt: client.createdAt.toISOString()
+          createdAt: client.createdAt instanceof Date ? client.createdAt.toISOString() : client.createdAt
         }))
 
         // Создаем CSV строку
@@ -5249,12 +5671,56 @@ export const resolvers = {
           throw new Error('Клиент не авторизован')
         }
 
-        // Создаем автомобиль из результата поиска
+        // Определяем clientId, убирая префикс client_ если он есть
+        const clientIdParts = actualContext.clientId.split('_')
+        let clientId = actualContext.clientId
+
+        if (clientIdParts.length >= 3) {
+          clientId = clientIdParts[1]
+        } else if (clientIdParts.length === 2) {
+          clientId = clientIdParts[1]
+        }
+
+        // Ищем информацию об автомобиле в истории поиска
+        const searchHistoryItem = await prisma.partsSearchHistory.findFirst({
+          where: {
+            clientId,
+            searchQuery: vin,
+            searchType: 'VIN'
+          },
+          orderBy: { createdAt: 'desc' } // Берем самую свежую запись
+        })
+
+        // Создаем название автомобиля на основе данных из истории
+        let vehicleName = `Автомобиль ${vin}`
+        let vehicleBrand: string | undefined = undefined
+        let vehicleModel: string | undefined = undefined
+        let vehicleYear: number | undefined = undefined
+
+        if (searchHistoryItem && (searchHistoryItem.vehicleBrand || searchHistoryItem.vehicleModel)) {
+          vehicleBrand = searchHistoryItem.vehicleBrand || undefined
+          vehicleModel = searchHistoryItem.vehicleModel || undefined
+          vehicleYear = searchHistoryItem.vehicleYear || undefined
+          
+          // Формируем красивое название
+          if (vehicleBrand && vehicleModel) {
+            vehicleName = `${vehicleBrand} ${vehicleModel}`
+          } else if (vehicleBrand) {
+            vehicleName = vehicleBrand
+          } else if (vehicleModel) {
+            vehicleName = vehicleModel
+          }
+        }
+
+        // Создаем автомобиль из результата поиска с полной информацией
         const vehicle = await prisma.clientVehicle.create({
           data: {
             clientId: actualContext.clientId,
-            name: `Автомобиль ${vin}`,
+            name: vehicleName,
             vin,
+            brand: vehicleBrand,
+            model: vehicleModel,
+            year: vehicleYear,
             comment: comment || ''
           }
         })
@@ -5269,13 +5735,49 @@ export const resolvers = {
       }
     },
 
-    deleteSearchHistoryItem: async () => {
+    deleteSearchHistoryItem: async (_: unknown, { id }: { id: string }, context: Context) => {
       try {
-        // Временная заглушка - возвращаем true
-        // В будущем здесь будет реальная логика удаления из истории
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Определяем clientId, убирая префикс client_ если он есть
+        const clientIdParts = actualContext.clientId.split('_')
+        let clientId = actualContext.clientId
+
+        if (clientIdParts.length >= 3) {
+          clientId = clientIdParts[1]
+        } else if (clientIdParts.length === 2) {
+          clientId = clientIdParts[1]
+        }
+
+        console.log('deleteSearchHistoryItem: удаление VIN записи', id, 'для клиента', clientId)
+
+        // Проверяем, что запись принадлежит клиенту и имеет тип VIN
+        const existingItem = await prisma.partsSearchHistory.findFirst({
+          where: { 
+            id, 
+            clientId,
+            searchType: 'VIN' // Удаляем только VIN записи
+          }
+        })
+
+        if (!existingItem) {
+          throw new Error('VIN запись не найдена или не принадлежит клиенту')
+        }
+
+        await prisma.partsSearchHistory.delete({
+          where: { id }
+        })
+
+        console.log('deleteSearchHistoryItem: VIN запись удалена')
         return true
       } catch (error) {
-        console.error('Ошибка удаления из истории поиска:', error)
+        console.error('Ошибка удаления из истории VIN поиска:', error)
+        if (error instanceof Error) {
+          throw error
+        }
         throw new Error('Не удалось удалить элемент из истории поиска')
       }
     },
@@ -5414,7 +5916,7 @@ export const resolvers = {
             year: historyItem.vehicleYear
           } : null,
           resultCount: historyItem.resultCount,
-          createdAt: historyItem.createdAt.toISOString()
+          createdAt: historyItem.createdAt instanceof Date ? historyItem.createdAt.toISOString() : historyItem.createdAt
         }
       } catch (error) {
         console.error('Ошибка создания записи истории поиска запчастей:', error)
@@ -5578,7 +6080,115 @@ export const resolvers = {
       }
     },
 
-    // Заказы и платежи
+    // Адреса доставки для авторизованного клиента
+    createClientDeliveryAddressMe: async (_: unknown, { input }: { input: ClientDeliveryAddressInput }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        const address = await prisma.clientDeliveryAddress.create({
+          data: {
+            clientId: actualContext.clientId,
+            name: input.name,
+            address: input.address,
+            deliveryType: input.deliveryType,
+            comment: input.comment,
+            // Дополнительные поля для курьерской доставки
+            entrance: input.entrance,
+            floor: input.floor,
+            apartment: input.apartment,
+            intercom: input.intercom,
+            deliveryTime: input.deliveryTime,
+            contactPhone: input.contactPhone
+          }
+        })
+
+        return address
+      } catch (error) {
+        console.error('Ошибка создания адреса доставки:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось создать адрес доставки')
+      }
+    },
+
+    updateClientDeliveryAddressMe: async (_: unknown, { id, input }: { id: string; input: ClientDeliveryAddressInput }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Проверяем, что адрес принадлежит текущему клиенту
+        const existingAddress = await prisma.clientDeliveryAddress.findUnique({
+          where: { id }
+        })
+
+        if (!existingAddress || existingAddress.clientId !== actualContext.clientId) {
+          throw new Error('Адрес не найден или недостаточно прав')
+        }
+
+        const address = await prisma.clientDeliveryAddress.update({
+          where: { id },
+          data: {
+            name: input.name,
+            address: input.address,
+            deliveryType: input.deliveryType,
+            comment: input.comment,
+            // Дополнительные поля для курьерской доставки
+            entrance: input.entrance,
+            floor: input.floor,
+            apartment: input.apartment,
+            intercom: input.intercom,
+            deliveryTime: input.deliveryTime,
+            contactPhone: input.contactPhone
+          }
+        })
+
+        return address
+      } catch (error) {
+        console.error('Ошибка обновления адреса доставки:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось обновить адрес доставки')
+      }
+    },
+
+    deleteClientDeliveryAddressMe: async (_: unknown, { id }: { id: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Проверяем, что адрес принадлежит текущему клиенту
+        const existingAddress = await prisma.clientDeliveryAddress.findUnique({
+          where: { id }
+        })
+
+        if (!existingAddress || existingAddress.clientId !== actualContext.clientId) {
+          throw new Error('Адрес не найден или недостаточно прав')
+        }
+
+        await prisma.clientDeliveryAddress.delete({
+          where: { id }
+        })
+
+        return true
+      } catch (error) {
+        console.error('Ошибка удаления адреса доставки:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось удалить адрес доставки')
+      }
+    },
+
+        // Заказы и платежи
     createOrder: async (_: unknown, { input }: { input: CreateOrderInput }, context: Context) => {
       try {
         const actualContext = context || getContext()
@@ -5672,350 +6282,6 @@ export const resolvers = {
       } catch (error) {
         console.error('Ошибка создания заказа:', error)
         throw new Error('Не удалось создать заказ')
-      }
-    },
-
-    updateOrderStatus: async (_: unknown, { id, status }: { id: string; status: string }, context: Context) => {
-      try {
-        const actualContext = context || getContext()
-        if (!actualContext.userId) {
-          throw new Error('Пользователь не авторизован')
-        }
-
-        const order = await prisma.order.update({
-          where: { id },
-          data: { status: status as any },
-          include: {
-            client: true,
-            items: {
-              include: {
-                product: true
-              }
-            },
-            payments: true
-          }
-        })
-
-        return order
-      } catch (error) {
-        console.error('Ошибка обновления статуса заказа:', error)
-        throw new Error('Не удалось обновить статус заказа')
-      }
-    },
-
-    confirmPayment: async (_: unknown, { orderId }: { orderId: string }, context: Context) => {
-      try {
-        const actualContext = context || getContext()
-        console.log('confirmPayment: context:', actualContext)
-        console.log('confirmPayment: clientId:', actualContext.clientId)
-        console.log('confirmPayment: userId:', actualContext.userId)
-        
-        // Для подтверждения оплаты проверяем, что заказ принадлежит клиенту
-        if (!actualContext.clientId) {
-          console.log('confirmPayment: clientId отсутствует в контексте')
-          throw new Error('Клиент не авторизован')
-        }
-
-        // Проверяем, что заказ принадлежит этому клиенту
-        // Убираем префикс client_ если он есть
-        const cleanClientId = actualContext.clientId.startsWith('client_') 
-          ? actualContext.clientId.substring(7) 
-          : actualContext.clientId
-        
-        console.log('confirmPayment: ищем заказ с ID:', orderId, 'для клиента:', cleanClientId, '(исходный:', actualContext.clientId, ')')
-        
-        const existingOrder = await prisma.order.findFirst({
-          where: { 
-            id: orderId,
-            clientId: cleanClientId
-          }
-        })
-
-        console.log('confirmPayment: найденный заказ:', existingOrder ? 'найден' : 'не найден')
-        
-        if (!existingOrder) {
-          // Попробуем найти заказ без фильтра по clientId для отладки
-          const anyOrder = await prisma.order.findUnique({
-            where: { id: orderId }
-          })
-          console.log('confirmPayment: заказ существует в БД:', anyOrder ? `да, clientId: ${anyOrder.clientId}` : 'нет')
-          throw new Error('Заказ не найден или не принадлежит клиенту')
-        }
-
-        const order = await prisma.order.update({
-          where: { id: orderId },
-          data: { status: 'PAID' },
-          include: {
-            client: true,
-            items: {
-              include: {
-                product: true
-              }
-            },
-            payments: true
-          }
-        })
-
-        console.log('confirmPayment: заказ обновлен:', order.id, order.status)
-        return order
-      } catch (error) {
-        console.error('Ошибка подтверждения оплаты:', error)
-        throw new Error('Не удалось подтвердить оплату')
-      }
-    },
-
-    updateOrderClient: async (_: unknown, { id, clientId }: { id: string; clientId: string }, context: Context) => {
-      try {
-        const order = await prisma.order.update({
-          where: { id },
-          data: { clientId },
-          include: {
-            client: true,
-            items: {
-              include: {
-                product: true
-              }
-            },
-            payments: true
-          }
-        })
-
-        return order
-      } catch (error) {
-        console.error('Ошибка обновления клиента заказа:', error)
-        throw new Error('Не удалось обновить клиента заказа')
-      }
-    },
-
-    cancelOrder: async (_: unknown, { id }: { id: string }, context: Context) => {
-      try {
-        const actualContext = context || getContext()
-        if (!actualContext.userId) {
-          throw new Error('Пользователь не авторизован')
-        }
-
-        // Получаем заказ с товарами
-        const existingOrder = await prisma.order.findUnique({
-          where: { id },
-          include: {
-            items: {
-              include: {
-                product: true
-              }
-            }
-          }
-        })
-
-        if (!existingOrder) {
-          throw new Error('Заказ не найден')
-        }
-
-        // Возвращаем товары на склад (только внутренние товары с productId)
-        const internalItems = existingOrder.items.filter(item => item.productId)
-        
-        if (internalItems.length > 0) {
-          console.log('cancelOrder: возвращаем товары на склад:', internalItems.length)
-          
-          for (const item of internalItems) {
-            await prisma.product.update({
-              where: { id: item.productId! },
-              data: {
-                stock: {
-                  increment: item.quantity
-                }
-              }
-            })
-            console.log(`cancelOrder: возвращено ${item.quantity} шт. товара ${item.productId} на склад`)
-          }
-        }
-
-        const order = await prisma.order.update({
-          where: { id },
-          data: { status: 'CANCELED' },
-          include: {
-            client: true,
-            items: {
-              include: {
-                product: true
-              }
-            },
-            payments: true
-          }
-        })
-
-        console.log('cancelOrder: заказ отменен:', order.orderNumber)
-        return order
-      } catch (error) {
-        console.error('Ошибка отмены заказа:', error)
-        throw new Error('Не удалось отменить заказ')
-      }
-    },
-
-    createPayment: async (_: unknown, { input }: { input: CreatePaymentInput }, context: Context) => {
-      try {
-        // Получаем заказ
-        const order = await prisma.order.findUnique({
-          where: { id: input.orderId },
-          include: {
-            client: true,
-            items: true
-          }
-        })
-
-        if (!order) {
-          throw new Error('Заказ не найден')
-        }
-
-        // Создаем платеж в YooKassa
-        const yooKassaPayment = await yooKassaService.createPayment({
-          amount: order.finalAmount,
-          description: input.description || `Оплата заказа ${order.orderNumber}`,
-          returnUrl: input.returnUrl,
-          metadata: {
-            orderId: order.id,
-            orderNumber: order.orderNumber
-          }
-        })
-
-        // Сохраняем платеж в базе данных
-        const payment = await prisma.payment.create({
-          data: {
-            orderId: order.id,
-            yookassaPaymentId: yooKassaPayment.id,
-            amount: order.finalAmount,
-            description: input.description || `Оплата заказа ${order.orderNumber}`,
-            confirmationUrl: yooKassaPayment.confirmation?.confirmation_url,
-            status: yooKassaPayment.status === 'pending' ? 'PENDING' : 
-                   yooKassaPayment.status === 'waiting_for_capture' ? 'WAITING_FOR_CAPTURE' :
-                   yooKassaPayment.status === 'succeeded' ? 'SUCCEEDED' : 'CANCELED'
-          },
-          include: {
-            order: {
-              include: {
-                client: true,
-                items: true
-              }
-            }
-          }
-        })
-
-        return {
-          payment,
-          confirmationUrl: yooKassaPayment.confirmation?.confirmation_url || ''
-        }
-      } catch (error) {
-        console.error('Ошибка создания платежа:', error)
-        throw new Error('Не удалось создать платеж')
-      }
-    },
-
-    cancelPayment: async (_: unknown, { id }: { id: string }, context: Context) => {
-      try {
-        const actualContext = context || getContext()
-        if (!actualContext.userId) {
-          throw new Error('Пользователь не авторизован')
-        }
-
-        const payment = await prisma.payment.findUnique({
-          where: { id },
-          include: {
-            order: true
-          }
-        })
-
-        if (!payment) {
-          throw new Error('Платеж не найден')
-        }
-
-        // Отменяем платеж в YooKassa
-        await yooKassaService.cancelPayment(payment.yookassaPaymentId)
-
-        // Обновляем статус в базе данных
-        const updatedPayment = await prisma.payment.update({
-          where: { id },
-          data: { 
-            status: 'CANCELED',
-            canceledAt: new Date()
-          },
-          include: {
-            order: {
-              include: {
-                client: true,
-                items: true
-              }
-            }
-          }
-        })
-
-        return updatedPayment
-      } catch (error) {
-        console.error('Ошибка отмены платежа:', error)
-        throw new Error('Не удалось отменить платеж')
-      }
-    },
-
-    deleteOrder: async (_: unknown, { id }: { id: string }, context: Context) => {
-      try {
-        const actualContext = context || getContext()
-        if (!actualContext.userId) {
-          throw new Error('Пользователь не авторизован')
-        }
-
-        // Проверяем, существует ли заказ
-        const order = await prisma.order.findUnique({
-          where: { id },
-          include: {
-            payments: true,
-            items: {
-              include: {
-                product: true
-              }
-            }
-          }
-        })
-
-        if (!order) {
-          throw new Error('Заказ не найден')
-        }
-
-        // Проверяем, можно ли удалить заказ (например, если он не оплачен)
-        const hasSuccessfulPayments = order.payments.some(payment => payment.status === 'SUCCEEDED')
-        if (hasSuccessfulPayments) {
-          throw new Error('Нельзя удалить оплаченный заказ')
-        }
-
-        // Возвращаем товары на склад (только внутренние товары с productId)
-        const internalItems = order.items.filter(item => item.productId)
-        
-        if (internalItems.length > 0) {
-          console.log('deleteOrder: возвращаем товары на склад:', internalItems.length)
-          
-          for (const item of internalItems) {
-            await prisma.product.update({
-              where: { id: item.productId! },
-              data: {
-                stock: {
-                  increment: item.quantity
-                }
-              }
-            })
-            console.log(`deleteOrder: возвращено ${item.quantity} шт. товара ${item.productId} на склад`)
-          }
-        }
-
-        // Удаляем заказ (связанные записи удалятся автоматически благодаря onDelete: Cascade)
-        await prisma.order.delete({
-          where: { id }
-        })
-
-        console.log('deleteOrder: заказ удален:', order.orderNumber)
-        return true
-      } catch (error) {
-        console.error('Ошибка удаления заказа:', error)
-        if (error instanceof Error) {
-          throw error
-        }
-        throw new Error('Не удалось удалить заказ')
       }
     }
   }

@@ -394,6 +394,10 @@ export const typeDefs = gql`
     TEXT
     ARTICLE
     OEM
+    VIN
+    PLATE
+    WIZARD
+    PART_VEHICLES
   }
 
   input PartsSearchHistoryInput {
@@ -413,6 +417,13 @@ export const typeDefs = gql`
     address: String!
     deliveryType: DeliveryType!
     comment: String
+    # Дополнительные поля для курьерской доставки
+    entrance: String
+    floor: String
+    apartment: String
+    intercom: String
+    deliveryTime: String
+    contactPhone: String
     createdAt: DateTime!
     updatedAt: DateTime!
   }
@@ -661,6 +672,13 @@ export const typeDefs = gql`
     address: String!
     deliveryType: DeliveryType!
     comment: String
+    # Дополнительные поля для курьерской доставки
+    entrance: String
+    floor: String
+    apartment: String
+    intercom: String
+    deliveryTime: String
+    contactPhone: String
   }
 
   input ClientContactInput {
@@ -898,6 +916,15 @@ export const typeDefs = gql`
     orderByNumber(orderNumber: String!): Order
     payments(orderId: String, status: PaymentStatus): [Payment!]!
     payment(id: ID!): Payment
+    
+    # Яндекс доставка
+    yandexDetectLocation(location: String!): [YandexLocationVariant!]!
+    yandexPickupPoints(filters: YandexPickupPointFilters): [YandexPickupPoint!]!
+    yandexPickupPointsByCity(cityName: String!): [YandexPickupPoint!]!
+    yandexPickupPointsByCoordinates(latitude: Float!, longitude: Float!, radiusKm: Float): [YandexPickupPoint!]!
+    
+    # Автокомплит адресов
+    addressSuggestions(query: String!): [String!]!
   }
 
   type AuthPayload {
@@ -1049,6 +1076,11 @@ export const typeDefs = gql`
     
     # Создание юр. лица для авторизованного клиента
     createClientLegalEntityMe(input: ClientLegalEntityInput!): ClientLegalEntity!
+    
+    # Адреса доставки для авторизованного клиента
+    createClientDeliveryAddressMe(input: ClientDeliveryAddressInput!): ClientDeliveryAddress!
+    updateClientDeliveryAddressMe(id: ID!, input: ClientDeliveryAddressInput!): ClientDeliveryAddress!
+    deleteClientDeliveryAddressMe(id: ID!): Boolean!
     
     # Заказы и платежи
     createOrder(input: CreateOrderInput!): Order!
@@ -1249,7 +1281,10 @@ export const typeDefs = gql`
     name: String!
     code: String
     description: String
+    imageurl: String
+    largeimageurl: String
     details: [LaximoDetail!]
+    attributes: [LaximoDetailAttribute!]
   }
 
   type LaximoDetail {
@@ -1369,7 +1404,7 @@ export const typeDefs = gql`
     description: String
     imageurl: String
     largeimageurl: String
-    attributes: [LaximoVehicleAttribute!]
+    attributes: [LaximoDetailAttribute!]
   }
 
   type LaximoUnitDetail {
@@ -1385,7 +1420,7 @@ export const typeDefs = gql`
     availability: String
     description: String
     applicablemodels: String
-    attributes: [LaximoVehicleAttribute!]
+    attributes: [LaximoDetailAttribute!]
   }
 
   type LaximoUnitImageMap {
@@ -1646,5 +1681,90 @@ export const typeDefs = gql`
     artMediaSupId: Int!         # Идентификатор поставщика запчасти
     artMediaKind: String        # Вид медиа-материала (может отсутствовать)
     imageUrl: String            # Полный URL изображения
+  }
+
+  # Типы для Яндекс доставки
+  type YandexPickupPointAddress {
+    fullAddress: String!
+    locality: String
+    street: String
+    house: String
+    building: String
+    apartment: String
+    postalCode: String
+    comment: String
+  }
+
+  type YandexPickupPointContact {
+    phone: String!
+    email: String
+    firstName: String
+    lastName: String
+  }
+
+  type YandexPickupPointPosition {
+    latitude: Float!
+    longitude: Float!
+  }
+
+  type YandexPickupPointScheduleTime {
+    hours: Int!
+    minutes: Int!
+  }
+
+  type YandexPickupPointScheduleRestriction {
+    days: [Int!]!
+    timeFrom: YandexPickupPointScheduleTime!
+    timeTo: YandexPickupPointScheduleTime!
+  }
+
+  type YandexPickupPointSchedule {
+    restrictions: [YandexPickupPointScheduleRestriction!]!
+    timeZone: Int!
+  }
+
+  enum YandexPickupPointType {
+    pickup_point
+    terminal
+    post_office
+    sorting_center
+  }
+
+  enum YandexPaymentMethod {
+    already_paid
+    card_on_receipt
+  }
+
+  type YandexPickupPoint {
+    id: String!
+    name: String!
+    address: YandexPickupPointAddress!
+    contact: YandexPickupPointContact!
+    position: YandexPickupPointPosition!
+    schedule: YandexPickupPointSchedule!
+    type: YandexPickupPointType!
+    paymentMethods: [YandexPaymentMethod!]!
+    instruction: String
+    isDarkStore: Boolean
+    isMarketPartner: Boolean
+    isPostOffice: Boolean
+    isYandexBranded: Boolean
+    formattedSchedule: String!
+    typeLabel: String!
+  }
+
+  type YandexLocationVariant {
+    address: String!
+    geoId: Int!
+  }
+
+  input YandexPickupPointFilters {
+    geoId: Int
+    latitude: Float
+    longitude: Float
+    radiusKm: Float
+    isYandexBranded: Boolean
+    isPostOffice: Boolean
+    type: YandexPickupPointType
   }
 ` 
