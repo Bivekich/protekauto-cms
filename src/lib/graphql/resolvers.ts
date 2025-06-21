@@ -1758,13 +1758,32 @@ export const resolvers = {
     // Поиск товаров и предложений
     searchProductOffers: async (_: unknown, { articleNumber, brand }: { articleNumber: string; brand: string }, context: Context) => {
       try {
-        console.log('🔍 GraphQL Resolver - поиск предложений для товара:', { articleNumber, brand })
+        // Проверяем входные параметры
+        if (!articleNumber || !brand || articleNumber.trim() === '' || brand.trim() === '') {
+          console.log('❌ GraphQL Resolver - некорректные параметры:', { articleNumber, brand })
+          return {
+            articleNumber: articleNumber || '',
+            brand: brand || '',
+            name: 'По запросу',
+            internalOffers: [],
+            externalOffers: [],
+            analogs: [],
+            hasInternalStock: false,
+            totalOffers: 0
+          }
+        }
+
+        // Очищаем параметры
+        const cleanArticleNumber = articleNumber.trim()
+        const cleanBrand = brand.trim()
+
+        console.log('🔍 GraphQL Resolver - поиск предложений для товара:', { articleNumber: cleanArticleNumber, brand: cleanBrand })
 
         // 1. Поиск в нашей базе данных
         const internalProducts = await prisma.product.findMany({
           where: {
             article: {
-              equals: articleNumber,
+              equals: cleanArticleNumber,
               mode: 'insensitive'
             }
           },
@@ -1779,11 +1798,11 @@ export const resolvers = {
         // 2. Поиск в AutoEuro
         let externalOffers: any[] = []
         try {
-          console.log('🔍 GraphQL Resolver - начинаем поиск в AutoEuro:', { articleNumber, brand })
+          console.log('🔍 GraphQL Resolver - начинаем поиск в AutoEuro:', { articleNumber: cleanArticleNumber, brand: cleanBrand })
           
           const autoEuroResult = await autoEuroService.searchItems({
-            code: articleNumber,
-            brand: brand,
+            code: cleanArticleNumber,
+            brand: cleanBrand,
             with_crosses: false,
             with_offers: true
           })
@@ -1826,7 +1845,7 @@ export const resolvers = {
         // 3. Поиск аналогов через Laximo
         const analogs: any[] = []
         try {
-          const laximoResult = await laximoDocService.findOEM(articleNumber, brand)
+          const laximoResult = await laximoDocService.findOEM(cleanArticleNumber, cleanBrand)
           if (laximoResult && laximoResult.details) {
             for (const detail of laximoResult.details) {
               if (detail.replacements && detail.replacements.length > 0) {
@@ -1843,6 +1862,8 @@ export const resolvers = {
           }
         } catch (error) {
           console.error('❌ Ошибка поиска аналогов через Laximo:', error)
+          // Не бросаем ошибку, просто продолжаем без аналогов
+          console.log('⚠️ Продолжаем без поиска аналогов из-за ошибки API')
         }
 
         console.log(`🔄 Найдено ${analogs.length} аналогов`)
@@ -1867,12 +1888,12 @@ export const resolvers = {
         } else if (externalOffers.length > 0) {
           productName = externalOffers[0].name
         } else {
-          productName = `${brand} ${articleNumber}`
+          productName = `${cleanBrand} ${cleanArticleNumber}`
         }
 
         const result = {
-          articleNumber,
-          brand,
+          articleNumber: cleanArticleNumber,
+          brand: cleanBrand,
           name: productName,
           internalOffers,
           externalOffers,
@@ -1882,8 +1903,8 @@ export const resolvers = {
         }
 
         console.log('✅ Результат поиска предложений:', {
-          articleNumber,
-          brand,
+          articleNumber: cleanArticleNumber,
+          brand: cleanBrand,
           internalOffers: result.internalOffers.length,
           externalOffers: result.externalOffers.length,
           analogs: result.analogs.length,
@@ -1898,10 +1919,10 @@ export const resolvers = {
         // Сохраняем в историю поиска
         await saveSearchHistory(
           context,
-          `${brand} ${articleNumber}`,
+          `${cleanBrand} ${cleanArticleNumber}`,
           'ARTICLE',
-          brand,
-          articleNumber,
+          cleanBrand,
+          cleanArticleNumber,
           undefined,
           result.totalOffers
         )

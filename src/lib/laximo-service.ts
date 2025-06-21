@@ -328,6 +328,13 @@ class LaximoDocService {
       if (!response.ok) {
         const errorText = await response.text()
         console.log('❌ Doc Error Response Body:', errorText)
+        
+        // Проверяем на ошибку лимита запросов
+        if (response.status === 500 && errorText.includes('E_TOO_MANY_REQUESTS')) {
+          console.log('⚠️ Превышен лимит запросов Laximo API - возвращаем пустой результат')
+          return '<soap:Envelope><soap:Body><ns:return></ns:return></soap:Body></soap:Envelope>'
+        }
+        
         throw new Error(`HTTP error! status: ${response.status}`)
       }
 
