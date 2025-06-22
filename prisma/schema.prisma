@@ -256,11 +256,35 @@ model Client {
   balanceHistory    ClientBalanceHistory[]
   orders            Order[]
   partsSearchHistory PartsSearchHistory[]
+  favorites         Favorite[]
   
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
   @@map("clients")
+}
+
+// Модель для избранных товаров
+model Favorite {
+  id          String   @id @default(cuid())
+  clientId    String
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  
+  // Данные о товаре - для внешних товаров (AutoEuro, PartsAPI)
+  productId   String?  // ID товара во внешней системе или внутренний ID
+  offerKey    String?  // Ключ предложения (для AutoEuro)
+  name        String   // Название товара
+  brand       String   // Бренд
+  article     String   // Артикул
+  price       Float?   // Цена (может отсутствовать)
+  currency    String?  // Валюта
+  image       String?  // URL изображения
+  
+  createdAt   DateTime @default(now())
+
+  // Уникальность по клиенту и комбинации идентификаторов товара
+  @@unique([clientId, productId, offerKey, article, brand])
+  @@map("favorites")
 }
 
 model ClientProfile {

@@ -392,6 +392,17 @@ interface CreatePaymentInput {
   description?: string
 }
 
+interface FavoriteInput {
+  productId?: string
+  offerKey?: string
+  name: string
+  brand: string
+  article: string
+  price?: number
+  currency?: string
+  image?: string
+}
+
 // Утилиты
 const createSlug = (text: string): string => {
   return text
@@ -1046,6 +1057,41 @@ export const resolvers = {
       }
     },
 
+    // Получение избранного авторизованного клиента
+    favorites: async (_: unknown, _args: unknown, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Удаляем префикс client_ если он есть
+        const cleanClientId = actualContext.clientId.startsWith('client_') 
+          ? actualContext.clientId.substring(7) 
+          : actualContext.clientId
+
+        const favorites = await prisma.favorite.findMany({
+          where: {
+            clientId: cleanClientId
+          },
+          orderBy: {
+            createdAt: 'desc'
+          },
+          include: {
+            client: true
+          }
+        })
+
+        return favorites
+      } catch (error) {
+        console.error('Ошибка получения избранного:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось получить избранное')
+      }
+    },
+
     vehicleSearchHistory: async (_: unknown, args: unknown, context: Context) => {
       try {
         const actualContext = context || getContext()
@@ -1587,10 +1633,30 @@ export const resolvers = {
 
     laximoUnits: async (_: unknown, { catalogCode, vehicleId, ssd, categoryId }: { catalogCode: string; vehicleId?: string; ssd?: string; categoryId?: string }) => {
       try {
-        console.log('🔍 Запрос узлов каталога:', catalogCode, 'vehicleId:', vehicleId, 'categoryId:', categoryId)
-        return await laximoService.getListUnits(catalogCode, vehicleId, ssd, categoryId)
+        console.log('🔍 GraphQL Resolver - запрос узлов каталога:', {
+          catalogCode,
+          vehicleId,
+          categoryId,
+          hasSSD: !!ssd,
+          ssdLength: ssd?.length
+        })
+        
+        const result = await laximoService.getListUnits(catalogCode, vehicleId, ssd, categoryId)
+        console.log('✅ GraphQL Resolver - получено узлов каталога:', result?.length || 0)
+        
+        if (result && result.length > 0) {
+          console.log('📦 Первый узел:', {
+            quickgroupid: result[0].quickgroupid,
+            name: result[0].name,
+            code: result[0].code,
+            hasImageUrl: !!result[0].imageurl,
+            imageUrl: result[0].imageurl ? result[0].imageurl.substring(0, 80) + '...' : 'отсутствует'
+          })
+        }
+        
+        return result || []
       } catch (error) {
-        console.error('Ошибка получения узлов каталога:', error)
+        console.error('❌ GraphQL Resolver - ошибка получения узлов каталога:', error)
         return []
       }
     },
@@ -6303,6 +6369,124 @@ export const resolvers = {
       } catch (error) {
         console.error('Ошибка создания заказа:', error)
         throw new Error('Не удалось создать заказ')
+      }
+    },
+
+    // Мутации для избранного
+    addToFavorites: async (_: unknown, { input }: { input: FavoriteInput }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Удаляем префикс client_ если он есть
+        const cleanClientId = actualContext.clientId.startsWith('client_') 
+          ? actualContext.clientId.substring(7) 
+          : actualContext.clientId
+
+        // Проверяем, нет ли уже такого товара в избранном
+        const existingFavorite = await prisma.favorite.findFirst({
+          where: {
+            clientId: cleanClientId,
+            productId: input.productId || undefined,
+            offerKey: input.offerKey || undefined,
+            article: input.article,
+            brand: input.brand
+          }
+        })
+
+        if (existingFavorite) {
+          return existingFavorite
+        }
+
+        const favorite = await prisma.favorite.create({
+          data: {
+            clientId: cleanClientId,
+            productId: input.productId,
+            offerKey: input.offerKey,
+            name: input.name,
+            brand: input.brand,
+            article: input.article,
+            price: input.price,
+            currency: input.currency,
+            image: input.image
+          },
+          include: {
+            client: true
+          }
+        })
+
+        return favorite
+      } catch (error) {
+        console.error('Ошибка добавления в избранное:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось добавить товар в избранное')
+      }
+    },
+
+    removeFromFavorites: async (_: unknown, { id }: { id: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Удаляем префикс client_ если он есть
+        const cleanClientId = actualContext.clientId.startsWith('client_') 
+          ? actualContext.clientId.substring(7) 
+          : actualContext.clientId
+
+        // Проверяем, что товар принадлежит текущему клиенту
+        const existingFavorite = await prisma.favorite.findUnique({
+          where: { id }
+        })
+
+        if (!existingFavorite || existingFavorite.clientId !== cleanClientId) {
+          throw new Error('Товар не найден в избранном или недостаточно прав')
+        }
+
+        await prisma.favorite.delete({
+          where: { id }
+        })
+
+        return true
+      } catch (error) {
+        console.error('Ошибка удаления из избранного:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось удалить товар из избранного')
+      }
+    },
+
+    clearFavorites: async (_: unknown, _args: unknown, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Клиент не авторизован')
+        }
+
+        // Удаляем префикс client_ если он есть
+        const cleanClientId = actualContext.clientId.startsWith('client_') 
+          ? actualContext.clientId.substring(7) 
+          : actualContext.clientId
+
+        await prisma.favorite.deleteMany({
+          where: {
+            clientId: cleanClientId
+          }
+        })
+
+        return true
+      } catch (error) {
+        console.error('Ошибка очистки избранного:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось очистить избранное')
       }
     }
   }

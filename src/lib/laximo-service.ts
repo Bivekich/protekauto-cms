@@ -108,6 +108,9 @@ export interface LaximoQuickGroup {
   name: string
   link: boolean
   children?: LaximoQuickGroup[]
+  code?: string
+  imageurl?: string
+  largeimageurl?: string
 }
 
 export interface LaximoQuickDetail {
@@ -1056,7 +1059,7 @@ class LaximoService {
    */
   async getListUnits(catalogCode: string, vehicleId?: string, ssd?: string, categoryId?: string): Promise<LaximoQuickGroup[]> {
     try {
-      console.log('🔍 Получаем узлы каталога для автомобиля:', vehicleId || 'общие')
+      console.log('🔍 LaximoService.getListUnits - начало запроса:', catalogCode)
       console.log('📋 Параметры:', { vehicleId, categoryId, ssd: ssd ? `${ssd.substring(0, 30)}...` : 'отсутствует' })
       
       // Формируем команду в зависимости от наличия vehicleId, SSD и categoryId
@@ -1077,11 +1080,35 @@ class LaximoService {
       console.log('🔗 HMAC:', hmac)
       
       const soapEnvelope = this.createSOAP11Envelope(command, this.login, hmac)
+      
+      console.log('🌐 Отправляем SOAP запрос...')
       const xmlText = await this.makeBasicSOAPRequest(this.soap11Url, soapEnvelope, 'urn:QueryDataLogin')
       
-      return this.parseListUnitsResponse(xmlText)
+      console.log('📥 Получен ответ от Laximo, начинаем парсинг...')
+      const result = this.parseListUnitsResponse(xmlText)
+      
+      console.log('✅ LaximoService.getListUnits - завершено, получено узлов:', result.length)
+      
+      if (result.length > 0) {
+        console.log('📦 Первый узел из LaximoService:', {
+          quickgroupid: result[0].quickgroupid,
+          name: result[0].name,
+          code: result[0].code,
+          hasImageUrl: !!result[0].imageurl,
+          imageUrl: result[0].imageurl ? result[0].imageurl.substring(0, 80) + '...' : 'отсутствует'
+        })
+      }
+      
+      return result
     } catch (error) {
-      console.error('Ошибка получения узлов каталога:', error)
+      console.error('❌ LaximoService.getListUnits - ошибка:', error)
+      if (error instanceof Error) {
+        console.error('❌ Подробности ошибки:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack?.substring(0, 500)
+        })
+      }
       return []
     }
   }
@@ -1115,19 +1142,31 @@ class LaximoService {
       const attributes = match[1]
       const content = match[2] || ''
       
-      // Извлекаем атрибуты
+      // Извлекаем атрибуты согласно API Laximo ListUnits
       const unitid = this.extractAttribute(attributes, 'unitid') || this.extractAttribute(attributes, 'id')
       const name = this.extractAttribute(attributes, 'name') || this.extractAttribute(attributes, 'description')
+      const code = this.extractAttribute(attributes, 'code')
+      const imageurl = this.extractAttribute(attributes, 'imageurl')
+      const largeimageurl = this.extractAttribute(attributes, 'largeimageurl')
       const hasDetails = this.extractAttribute(attributes, 'hasdetails') === 'true'
       
       if (unitid && name) {
         const group: LaximoQuickGroup = {
           quickgroupid: unitid,
           name: name,
-          link: hasDetails
+          link: hasDetails,
+          code: code || undefined,
+          imageurl: imageurl || undefined,
+          largeimageurl: largeimageurl || undefined
         }
         
-        console.log('📦 Найден узел каталога:', { unitid, name, hasDetails })
+        console.log('📦 Найден узел каталога:', { 
+          unitid, 
+          name, 
+          code, 
+          imageurl: imageurl ? imageurl.substring(0, 50) + '...' : 'отсутствует', 
+          hasDetails 
+        })
         groups.push(group)
       }
     }

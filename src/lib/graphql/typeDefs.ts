@@ -214,6 +214,7 @@ export const typeDefs = gql`
     legalEntities: [ClientLegalEntity!]!
     bankDetails: [ClientBankDetails!]!
     balanceHistory: [ClientBalanceHistory!]!
+    favorites: [Favorite!]!
     createdAt: DateTime!
     updatedAt: DateTime!
   }
@@ -533,6 +534,21 @@ export const typeDefs = gql`
     updatedAt: DateTime!
   }
 
+  type Favorite {
+    id: ID!
+    clientId: String!
+    client: Client!
+    productId: String
+    offerKey: String
+    name: String!
+    brand: String!
+    article: String!
+    price: Float
+    currency: String
+    image: String
+    createdAt: DateTime!
+  }
+
   input CreateUserInput {
     firstName: String!
     lastName: String!
@@ -808,6 +824,17 @@ export const typeDefs = gql`
     description: String
   }
 
+  input FavoriteInput {
+    productId: String
+    offerKey: String
+    name: String!
+    brand: String!
+    article: String!
+    price: Float
+    currency: String
+    image: String
+  }
+
   input ClientFilterInput {
     type: ClientType
     registeredFrom: DateTime
@@ -868,6 +895,9 @@ export const typeDefs = gql`
     
     # Данные авторизованного клиента
     clientMe: Client
+    
+    # Избранное
+    favorites: [Favorite!]!
     
     # Laximo интеграция
     laximoBrands: [LaximoBrand!]!
@@ -1091,6 +1121,11 @@ export const typeDefs = gql`
     deleteOrder(id: ID!): Boolean!
     createPayment(input: CreatePaymentInput!): CreatePaymentResult!
     cancelPayment(id: ID!): Payment!
+    
+    # Избранное
+    addToFavorites(input: FavoriteInput!): Favorite!
+    removeFromFavorites(id: ID!): Boolean!
+    clearFavorites: Boolean!
   }
 
   input LoginInput {
@@ -1268,6 +1303,9 @@ export const typeDefs = gql`
     name: String!
     link: Boolean!
     children: [LaximoQuickGroup!]
+    code: String
+    imageurl: String
+    largeimageurl: String
   }
 
   type LaximoQuickDetail {
