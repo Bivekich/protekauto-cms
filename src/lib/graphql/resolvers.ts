@@ -721,6 +721,31 @@ export const resolvers = {
       }
     },
 
+    productsCount: async (_: unknown, { categoryId, search }: { 
+      categoryId?: string; search?: string 
+    }) => {
+      try {
+        const where: Record<string, unknown> = {}
+        
+        if (categoryId) {
+          where.categories = { some: { id: categoryId } }
+        }
+        
+        if (search) {
+          where.OR = [
+            { name: { contains: search, mode: 'insensitive' } },
+            { article: { contains: search, mode: 'insensitive' } },
+            { description: { contains: search, mode: 'insensitive' } }
+          ]
+        }
+
+        return await prisma.product.count({ where })
+      } catch (error) {
+        console.error('Ошибка подсчета товаров:', error)
+        throw new Error('Не удалось подсчитать товары')
+      }
+    },
+
     product: async (_: unknown, { id }: { id: string }) => {
       try {
         return await prisma.product.findUnique({

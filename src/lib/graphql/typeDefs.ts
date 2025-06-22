@@ -866,6 +866,7 @@ export const typeDefs = gql`
     category(id: ID!): Category
     categoryBySlug(slug: String!): Category
     products(categoryId: String, search: String, limit: Int, offset: Int): [Product!]!
+    productsCount(categoryId: String, search: String): Int!
     product(id: ID!): Product
     productBySlug(slug: String!): Product
     productHistory(productId: ID!): [ProductHistory!]!

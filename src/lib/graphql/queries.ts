@@ -362,6 +362,12 @@ export const GET_PRODUCTS = gql`
   }
 `
 
+export const GET_PRODUCTS_COUNT = gql`
+  query GetProductsCount($categoryId: String, $search: String) {
+    productsCount(categoryId: $categoryId, search: $search)
+  }
+`
+
 export const GET_PRODUCT = gql`
   query GetProduct($id: ID!) {
     product(id: $id) {

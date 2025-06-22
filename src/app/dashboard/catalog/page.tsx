@@ -21,7 +21,8 @@ import { ProductList } from '@/components/catalog/ProductList'
 import { CategoryForm } from '@/components/catalog/CategoryForm'
 import { ProductForm } from '@/components/catalog/ProductForm'
 import { ImportProductsModal } from '@/components/catalog/ImportProductsModal'
-import { GET_CATEGORIES, GET_PRODUCTS } from '@/lib/graphql/queries'
+import { Pagination } from '@/components/ui/pagination'
+import { GET_CATEGORIES, GET_PRODUCTS, GET_PRODUCTS_COUNT } from '@/lib/graphql/queries'
 import { EXPORT_PRODUCTS } from '@/lib/graphql/mutations'
 
 
@@ -35,14 +36,24 @@ export default function CatalogPage() {
   const [editingCategory, setEditingCategory] = useState(undefined)
   const [editingProduct, setEditingProduct] = useState(undefined)
   const [exportLoading, setExportLoading] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 20
 
   const { data: categoriesData, loading: categoriesLoading, refetch: refetchCategories } = useQuery(GET_CATEGORIES)
+  
   const { data: productsData, loading: productsLoading, refetch: refetchProducts } = useQuery(GET_PRODUCTS, {
     variables: {
       categoryId: selectedCategoryId,
       search: searchQuery || undefined,
-      limit: 50,
-      offset: 0
+      limit: itemsPerPage,
+      offset: (currentPage - 1) * itemsPerPage
+    }
+  })
+
+  const { data: productsCountData, loading: countLoading } = useQuery(GET_PRODUCTS_COUNT, {
+    variables: {
+      categoryId: selectedCategoryId,
+      search: searchQuery || undefined
     }
   })
 
@@ -50,13 +61,21 @@ export default function CatalogPage() {
 
   const categories = categoriesData?.categories || []
   const products = productsData?.products || []
+  const totalProducts = productsCountData?.productsCount || 0
+  const totalPages = Math.ceil(totalProducts / itemsPerPage)
 
   const handleCategorySelect = (categoryId: string | null) => {
     setSelectedCategoryId(categoryId)
+    setCurrentPage(1) // Сбрасываем на первую страницу при смене категории
   }
 
   const handleSearch = (query: string) => {
     setSearchQuery(query)
+    setCurrentPage(1) // Сбрасываем на первую страницу при поиске
+  }
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page)
   }
 
   const handleCategoryCreated = () => {
@@ -136,11 +155,10 @@ export default function CatalogPage() {
               <h1 className="text-2xl font-bold text-gray-900">
                 {selectedCategory ? selectedCategory.name : 'Все товары'}
               </h1>
-              {selectedCategory && (
-                <p className="text-sm text-gray-500 mt-1">
-                  Категория • {selectedCategory._count?.products || 0} товаров
-                </p>
-              )}
+              <p className="text-sm text-gray-500 mt-1">
+                {countLoading ? 'Загрузка...' : `Всего товаров: ${totalProducts}`}
+                {totalPages > 1 && ` • Страница ${currentPage} из ${totalPages}`}
+              </p>
             </div>
             
             <div className="flex items-center space-x-2">
@@ -192,6 +210,25 @@ export default function CatalogPage() {
             onProductEdit={(product: any) => setEditingProduct(product)}
             onProductCreated={handleProductCreated}
           />
+          
+          {/* Пагинация и информация */}
+          {totalProducts > 0 && (
+            <div className="mt-6 space-y-4">
+              {/* Информация о диапазоне */}
+              <div className="text-sm text-gray-600 text-center">
+                Показано {Math.min((currentPage - 1) * itemsPerPage + 1, totalProducts)}-{Math.min(currentPage * itemsPerPage, totalProducts)} из {totalProducts} товаров
+              </div>
+              
+              {/* Пагинация */}
+              {totalPages > 1 && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  onPageChange={handlePageChange}
+                />
+              )}
+            </div>
+          )}
         </div>
       </div>
 
