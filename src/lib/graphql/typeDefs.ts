@@ -1063,7 +1063,7 @@ export const typeDefs = gql`
     
     # Банковские реквизиты
     createClientBankDetails(legalEntityId: ID!, input: ClientBankDetailsInput!): ClientBankDetails!
-    updateClientBankDetails(id: ID!, input: ClientBankDetailsInput!): ClientBankDetails!
+    updateClientBankDetails(id: ID!, input: ClientBankDetailsInput!, legalEntityId: ID): ClientBankDetails!
     deleteClientBankDetails(id: ID!): Boolean!
     
     # Профили клиентов

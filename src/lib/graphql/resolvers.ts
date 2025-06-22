@@ -1053,7 +1053,11 @@ export const resolvers = {
           include: {
             legalEntities: {
               include: {
-                bankDetails: true
+                bankDetails: {
+                  include: {
+                    legalEntity: true
+                  }
+                }
               }
             },
             profile: true,
@@ -1061,7 +1065,11 @@ export const resolvers = {
             deliveryAddresses: true,
             contacts: true,
             contracts: true,
-            bankDetails: true,
+            bankDetails: {
+              include: {
+                legalEntity: true
+              }
+            },
             discounts: true
           }
         })
@@ -5414,11 +5422,22 @@ export const resolvers = {
       }
     },
 
-    updateClientBankDetails: async (_: unknown, { id, input }: { id: string; input: ClientBankDetailsInput }, context: Context) => {
+    updateClientBankDetails: async (_: unknown, { id, input, legalEntityId }: { id: string; input: ClientBankDetailsInput; legalEntityId?: string }, context: Context) => {
       try {
         const actualContext = context || getContext()
         if (!actualContext.userId && !actualContext.clientId) {
           throw new Error('Пользователь не авторизован')
+        }
+
+        // Если передан legalEntityId, проверяем что юридическое лицо существует
+        if (legalEntityId) {
+          const legalEntity = await prisma.clientLegalEntity.findUnique({
+            where: { id: legalEntityId }
+          })
+
+          if (!legalEntity) {
+            throw new Error('Юридическое лицо не найдено')
+          }
         }
 
         const bankDetails = await prisma.clientBankDetails.update({
@@ -5428,7 +5447,8 @@ export const resolvers = {
             accountNumber: input.accountNumber,
             bankName: input.bankName,
             bik: input.bik,
-            correspondentAccount: input.correspondentAccount
+            correspondentAccount: input.correspondentAccount,
+            ...(legalEntityId && { legalEntityId })
           },
           include: {
             legalEntity: true
