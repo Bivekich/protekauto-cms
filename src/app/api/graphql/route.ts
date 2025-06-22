@@ -44,25 +44,17 @@ async function createContext(req: any): Promise<Context> {
   if (token.startsWith('client_')) {
     console.log('GraphQL: найден клиентский токен:', token)
     
-    // Различаем два типа токенов:
-    // 1. client_${cuid} - для зарегистрированных клиентов
-    // 2. client_${cuid}_${timestamp} - для зарегистрированных клиентов с timestamp
-    // 3. client_cmbzedr1k0000rqz5phpvgpxc - временные клиенты (длинные ID)
-    
     const tokenParts = token.split('_')
-    let clientId = token  // по умолчанию весь токен для временных клиентов
+    let clientId: string
     
-    if (tokenParts.length >= 3) {
-      // Это токен формата client_${clientId}_${timestamp} - извлекаем реальный ID
+    if (tokenParts.length >= 2) {
+      // Это токен формата client_${clientId} или client_${clientId}_${timestamp}
       clientId = tokenParts[1]
-      console.log('GraphQL: извлечен реальный clientId из токена с timestamp:', clientId)
-    } else if (tokenParts.length === 2) {
-      // Это токен формата client_${clientId} - извлекаем реальный ID
-      clientId = tokenParts[1]
-      console.log('GraphQL: извлечен реальный clientId:', clientId)
+      console.log('GraphQL: извлечен clientId из токена:', clientId)
     } else {
-      // Временный клиент
-      console.log('GraphQL: используем временный clientId:', clientId)
+      // Неправильный формат токена
+      console.error('GraphQL: неправильный формат клиентского токена:', token)
+      return { headers: requestHeaders }
     }
     
     const context = {

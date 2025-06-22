@@ -5329,12 +5329,23 @@ export const resolvers = {
     // Счета на пополнение баланса
     createBalanceInvoice: async (_: unknown, { contractId, amount }: { contractId: string; amount: number }, context: Context) => {
       try {
+        console.log('🔍 createBalanceInvoice: начало выполнения')
+        console.log('📋 createBalanceInvoice: contractId:', contractId, 'amount:', amount)
+        
         const actualContext = context || getContext()
+        console.log('🔑 createBalanceInvoice: контекст:', {
+          clientId: actualContext.clientId,
+          userId: actualContext.userId,
+          userRole: actualContext.userRole
+        })
+        
         if (!actualContext.clientId) {
+          console.log('❌ createBalanceInvoice: клиент не авторизован')
           throw new Error('Пользователь не авторизован')
         }
 
         // Находим договор и проверяем что он принадлежит клиенту
+        console.log('🔍 createBalanceInvoice: поиск договора:', contractId)
         const contract = await prisma.clientContract.findUnique({
           where: { id: contractId },
           include: {
@@ -5347,20 +5358,33 @@ export const resolvers = {
         })
 
         if (!contract) {
+          console.log('❌ createBalanceInvoice: договор не найден')
           throw new Error('Договор не найден')
         }
 
+        console.log('📋 createBalanceInvoice: найден договор:', {
+          id: contract.id,
+          contractNumber: contract.contractNumber,
+          clientId: contract.clientId,
+          isActive: contract.isActive
+        })
+
         if (contract.clientId !== actualContext.clientId) {
+          console.log('❌ createBalanceInvoice: недостаточно прав. Договор принадлежит:', contract.clientId, 'а запрашивает:', actualContext.clientId)
           throw new Error('Недостаточно прав')
         }
 
         if (!contract.isActive) {
+          console.log('❌ createBalanceInvoice: договор неактивен')
           throw new Error('Договор неактивен')
         }
 
         if (amount <= 0) {
+          console.log('❌ createBalanceInvoice: неправильная сумма:', amount)
           throw new Error('Сумма должна быть больше 0')
         }
+
+        console.log('✅ createBalanceInvoice: все проверки пройдены, создаем счет')
 
         // Импортируем сервис генерации счетов
         const { InvoiceService } = await import('../invoice-service')
@@ -5370,6 +5394,8 @@ export const resolvers = {
           le.shortName === contract.clientLegalEntity || 
           le.fullName === contract.clientLegalEntity
         )
+
+        console.log('🏢 createBalanceInvoice: юридическое лицо:', clientLegalEntity?.shortName || 'не найдено')
 
         // Создаем данные для счета
         const invoiceData = {
@@ -5385,6 +5411,8 @@ export const resolvers = {
         // Генерируем номер счета
         const invoiceNumber = InvoiceService.generateInvoiceNumber()
         const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) // +3 дня
+
+        console.log('📄 createBalanceInvoice: создаем счет с номером:', invoiceNumber)
 
         // Сохраняем счет в базу данных
         const balanceInvoice = await prisma.balanceInvoice.create({
@@ -5406,9 +5434,10 @@ export const resolvers = {
           }
         })
 
+        console.log('✅ createBalanceInvoice: счет создан успешно:', balanceInvoice.id)
         return balanceInvoice
       } catch (error) {
-        console.error('Ошибка создания счета на пополнение баланса:', error)
+        console.error('❌ createBalanceInvoice: ошибка создания счета на пополнение баланса:', error)
         if (error instanceof Error) {
           throw error
         }
