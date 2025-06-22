@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { InvoiceService } from '@/lib/invoice-service'
-import { extractTokenFromHeaders } from '@/lib/auth'
+import { extractTokenFromHeaders, getUserFromToken } from '@/lib/auth'
 
 export async function GET(
   request: NextRequest,
@@ -13,12 +13,74 @@ export async function GET(
 
     console.log('🔍 Скачивание счета:', invoiceId)
 
-    // Проверяем авторизацию
+    // Проверяем авторизацию администратора (для админки)
+    const adminToken = extractTokenFromHeaders(request.headers)
+    if (adminToken) {
+      const adminUser = getUserFromToken(adminToken)
+      if (adminUser?.role === 'ADMIN') {
+        console.log('👑 Администратор авторизован')
+        
+        // Получаем счет для администратора (без проверки принадлежности)
+        const invoice = await prisma.balanceInvoice.findUnique({
+          where: { id: invoiceId },
+          include: {
+            contract: {
+              include: {
+                client: {
+                  include: {
+                    legalEntities: true
+                  }
+                }
+              }
+            }
+          }
+        })
+
+        if (!invoice) {
+          console.log('❌ Счет не найден:', invoiceId)
+          return NextResponse.json({ error: 'Счет не найден' }, { status: 404 })
+        }
+
+        // Получаем первое юридическое лицо клиента
+        const legalEntity = invoice.contract.client.legalEntities[0]
+
+        // Формируем данные для генерации PDF
+        const invoiceData = {
+          invoiceNumber: invoice.invoiceNumber,
+          amount: invoice.amount,
+          clientName: legalEntity?.shortName || invoice.contract.client.name || invoice.contract.client.phone,
+          clientInn: legalEntity?.inn,
+          clientAddress: legalEntity?.legalAddress,
+          contractNumber: invoice.contract.contractNumber,
+          description: `Пополнение баланса по договору ${invoice.contract.contractNumber}`,
+          dueDate: invoice.expiresAt
+        }
+
+        console.log('📄 Генерируем PDF для счета (админ):', invoice.invoiceNumber)
+
+        // Генерируем PDF
+        const pdfBuffer = await InvoiceService.generatePDF(invoiceData)
+
+        // Возвращаем PDF файл
+        const pdfUint8Array = new Uint8Array(pdfBuffer)
+        
+        return new NextResponse(pdfUint8Array, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `attachment; filename*=UTF-8''invoice-${encodeURIComponent(invoice.invoiceNumber)}.pdf`,
+            'Content-Length': pdfBuffer.length.toString(),
+          },
+        })
+      }
+    }
+
+    // Проверяем авторизацию клиента (для фронтенда)
     const token = extractTokenFromHeaders(request.headers)
-    console.log('🔑 Токен получен:', token ? 'да' : 'нет')
+    console.log('🔑 Токен клиента получен:', token ? 'да' : 'нет')
     
     if (!token) {
-      console.log('❌ Токен отсутствует')
+      console.log('❌ Нет авторизации (ни админ, ни клиент)')
       return NextResponse.json({ error: 'Не авторизован' }, { status: 401 })
     }
 
