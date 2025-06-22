@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { CREATE_CLIENT_CONTRACT, UPDATE_CLIENT_CONTRACT, DELETE_CLIENT_CONTRACT } from '@/lib/graphql/mutations'
+import { CREATE_CLIENT_CONTRACT, UPDATE_CLIENT_CONTRACT, DELETE_CLIENT_CONTRACT, UPDATE_CONTRACT_BALANCE } from '@/lib/graphql/mutations'
 import { Plus, Edit, Trash2, Save, X } from 'lucide-react'
 
 interface Contract {
@@ -113,6 +113,16 @@ export const Contracts = ({ client, onUpdate }: ContractsProps) => {
     }
   })
 
+  const [updateContractBalance] = useMutation(UPDATE_CONTRACT_BALANCE, {
+    onCompleted: () => {
+      toast.success('Баланс договора обновлен')
+      onUpdate()
+    },
+    onError: (error) => {
+      toast.error(`Ошибка обновления баланса: ${error.message}`)
+    }
+  })
+
   const handleSave = async () => {
     if (!formData.contractNumber || !formData.name) {
       toast.error('Заполните обязательные поля (номер и название договора)')
@@ -203,6 +213,20 @@ export const Contracts = ({ client, onUpdate }: ContractsProps) => {
     setEditingData(null)
   }
 
+  const handleTopUpBalance = async (contractId: string, amount: number) => {
+    try {
+      await updateContractBalance({
+        variables: {
+          contractId,
+          amount,
+          comment: `Пополнение баланса на ${amount} ₽ через админку`
+        }
+      })
+    } catch (error) {
+      console.error('Ошибка пополнения баланса:', error)
+    }
+  }
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -224,6 +248,8 @@ export const Contracts = ({ client, onUpdate }: ContractsProps) => {
                 <TableHead>Дата</TableHead>
                 <TableHead>Статус</TableHead>
                 <TableHead>Баланс</TableHead>
+                <TableHead>Лимит отсрочки</TableHead>
+                <TableHead>Дни отсрочки</TableHead>
                 <TableHead>Действия</TableHead>
               </TableRow>
             </TableHeader>
@@ -313,7 +339,64 @@ export const Contracts = ({ client, onUpdate }: ContractsProps) => {
                         </Select>
                       </div>
                     ) : (
-                      contract.balance ? `${contract.balance.toLocaleString()} ${contract.currency || 'RUB'}` : '-'
+                      <div className="space-y-1">
+                        <div className={`font-medium ${(contract.balance || 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                          {contract.balance !== undefined ? `${contract.balance.toLocaleString()} ${contract.currency || 'RUB'}` : '0 RUB'}
+                        </div>
+                        <div className="flex gap-1">
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            onClick={() => handleTopUpBalance(contract.id, 1000)}
+                            className="text-xs px-2 py-1 h-6"
+                          >
+                            +1000
+                          </Button>
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            onClick={() => handleTopUpBalance(contract.id, 5000)}
+                            className="text-xs px-2 py-1 h-6"
+                          >
+                            +5000
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {editingId === contract.id ? (
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={editingData?.creditLimit || ''}
+                        onChange={(e) => setEditingData(prev => prev ? { ...prev, creditLimit: e.target.value ? parseFloat(e.target.value) : undefined } : null)}
+                        placeholder="Лимит отсрочки"
+                      />
+                    ) : (
+                      <div className="font-medium">
+                        {contract.creditLimit !== undefined && contract.creditLimit !== null 
+                          ? `${contract.creditLimit.toLocaleString()} ₽` 
+                          : 'Не установлен'
+                        }
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {editingId === contract.id ? (
+                      <Input
+                        type="number"
+                        value={editingData?.delayDays || ''}
+                        onChange={(e) => setEditingData(prev => prev ? { ...prev, delayDays: e.target.value ? parseInt(e.target.value) : undefined } : null)}
+                        placeholder="Дни отсрочки"
+                      />
+                    ) : (
+                      <div className="font-medium">
+                        {contract.delayDays !== undefined && contract.delayDays !== null 
+                          ? `${contract.delayDays} дней` 
+                          : 'Не установлено'
+                        }
+                      </div>
                     )}
                   </TableCell>
                   <TableCell>
@@ -400,6 +483,23 @@ export const Contracts = ({ client, onUpdate }: ContractsProps) => {
                         </SelectContent>
                       </Select>
                     </div>
+                  </TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={formData.creditLimit}
+                      onChange={(e) => setFormData(prev => ({ ...prev, creditLimit: e.target.value }))}
+                      placeholder="Лимит отсрочки"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      value={formData.delayDays}
+                      onChange={(e) => setFormData(prev => ({ ...prev, delayDays: e.target.value }))}
+                      placeholder="Дни отсрочки"
+                    />
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-2">

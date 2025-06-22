@@ -533,10 +533,37 @@ model ClientContract {
   creditLimit       Float?
   delayDays         Int?
   fileUrl           String?  // Ссылка на файл договора
+  balanceInvoices   BalanceInvoice[] // Счета на пополнение баланса
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   @@map("client_contracts")
+}
+
+// Счета на пополнение баланса
+model BalanceInvoice {
+  id            String        @id @default(cuid())
+  contractId    String
+  contract      ClientContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  amount        Float
+  currency      String        @default("RUB")
+  status        InvoiceStatus @default(PENDING)
+  invoiceNumber String        @unique
+  qrCode        String        // QR код для оплаты
+  pdfUrl        String?       // Ссылка на PDF счета
+  paymentUrl    String?       // Ссылка на оплату
+  expiresAt     DateTime      // Срок действия счета
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@map("balance_invoices")
+}
+
+enum InvoiceStatus {
+  PENDING   // Ожидает оплаты
+  PAID      // Оплачен
+  EXPIRED   // Просрочен
+  CANCELLED // Отменен
 }
 
 // Юридические лица клиента

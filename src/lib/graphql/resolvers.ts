@@ -593,6 +593,41 @@ export const resolvers = {
       }
     },
 
+    // Счета на пополнение баланса
+    balanceInvoices: async (_: unknown, __: unknown, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.userId) {
+          throw new Error('Пользователь не авторизован')
+        }
+
+        const invoices = await prisma.balanceInvoice.findMany({
+          include: {
+            contract: {
+              include: {
+                client: {
+                  include: {
+                    legalEntities: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: {
+            createdAt: 'desc'
+          }
+        })
+
+        return invoices
+      } catch (error) {
+        console.error('Ошибка получения счетов:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось получить список счетов')
+      }
+    },
+
     auditLogs: async (_: unknown, { limit = 50, offset = 0 }: { limit?: number; offset?: number }, context: Context) => {
       try {
         if (!context.userId || context.userRole !== 'ADMIN') {
@@ -5244,6 +5279,203 @@ export const resolvers = {
           throw error
         }
         throw new Error('Не удалось удалить договор')
+      }
+    },
+
+    updateContractBalance: async (_: unknown, { contractId, amount, comment }: { contractId: string; amount: number; comment?: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.userId) {
+          throw new Error('Пользователь не авторизован')
+        }
+
+        // Находим договор
+        const contract = await prisma.clientContract.findUnique({
+          where: { id: contractId }
+        })
+
+        if (!contract) {
+          throw new Error('Договор не найден')
+        }
+
+        // Обновляем баланс договора
+        const newBalance = contract.balance + amount
+        const updatedContract = await prisma.clientContract.update({
+          where: { id: contractId },
+          data: { balance: newBalance }
+        })
+
+        // Создаем запись в истории изменений баланса клиента
+        await prisma.clientBalanceHistory.create({
+          data: {
+            clientId: contract.clientId,
+            userId: actualContext.userId,
+            oldValue: contract.balance,
+            newValue: newBalance,
+            comment: comment || `Пополнение баланса договора ${contract.contractNumber} на ${amount} ${contract.currency}`
+          }
+        })
+
+        return updatedContract
+      } catch (error) {
+        console.error('Ошибка обновления баланса договора:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось обновить баланс договора')
+      }
+    },
+
+    // Счета на пополнение баланса
+    createBalanceInvoice: async (_: unknown, { contractId, amount }: { contractId: string; amount: number }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.clientId) {
+          throw new Error('Пользователь не авторизован')
+        }
+
+        // Находим договор и проверяем что он принадлежит клиенту
+        const contract = await prisma.clientContract.findUnique({
+          where: { id: contractId },
+          include: {
+            client: {
+              include: {
+                legalEntities: true
+              }
+            }
+          }
+        })
+
+        if (!contract) {
+          throw new Error('Договор не найден')
+        }
+
+        if (contract.clientId !== actualContext.clientId) {
+          throw new Error('Недостаточно прав')
+        }
+
+        if (!contract.isActive) {
+          throw new Error('Договор неактивен')
+        }
+
+        if (amount <= 0) {
+          throw new Error('Сумма должна быть больше 0')
+        }
+
+        // Импортируем сервис генерации счетов
+        const { InvoiceService } = await import('../invoice-service')
+
+        // Находим юридическое лицо клиента для этого договора
+        const clientLegalEntity = contract.client.legalEntities.find(le => 
+          le.shortName === contract.clientLegalEntity || 
+          le.fullName === contract.clientLegalEntity
+        )
+
+        // Создаем данные для счета
+        const invoiceData = {
+          contractId: contract.id,
+          amount,
+          currency: contract.currency,
+          invoiceNumber: '', // будет сгенерирован в сервисе
+          contractNumber: contract.contractNumber,
+          clientName: clientLegalEntity?.shortName || contract.client.name,
+          clientInn: clientLegalEntity?.inn
+        }
+
+        // Генерируем номер счета
+        const invoiceNumber = InvoiceService.generateInvoiceNumber()
+        const expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) // +3 дня
+
+        // Сохраняем счет в базу данных
+        const balanceInvoice = await prisma.balanceInvoice.create({
+          data: {
+            contractId: contract.id,
+            amount,
+            currency: contract.currency,
+            invoiceNumber,
+            qrCode: '', // Заполним позже
+            expiresAt,
+            status: 'PENDING'
+          },
+          include: {
+            contract: {
+              include: {
+                client: true
+              }
+            }
+          }
+        })
+
+        return balanceInvoice
+      } catch (error) {
+        console.error('Ошибка создания счета на пополнение баланса:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось создать счет на пополнение баланса')
+      }
+    },
+
+    updateInvoiceStatus: async (_: unknown, { invoiceId, status }: { invoiceId: string; status: string }, context: Context) => {
+      try {
+        const actualContext = context || getContext()
+        if (!actualContext.userId) {
+          throw new Error('Пользователь не авторизован')
+        }
+
+        // Находим счет
+        const invoice = await prisma.balanceInvoice.findUnique({
+          where: { id: invoiceId },
+          include: {
+            contract: {
+              include: {
+                client: true
+              }
+            }
+          }
+        })
+
+        if (!invoice) {
+          throw new Error('Счет не найден')
+        }
+
+        // Обновляем статус счета
+        const updatedInvoice = await prisma.balanceInvoice.update({
+          where: { id: invoiceId },
+          data: { 
+            status: status as any,
+            updatedAt: new Date()
+          },
+          include: {
+            contract: {
+              include: {
+                client: true
+              }
+            }
+          }
+        })
+
+        // Если статус изменен на PAID, пополняем баланс договора
+        if (status === 'PAID' && invoice.status !== 'PAID') {
+          await prisma.clientContract.update({
+            where: { id: invoice.contractId },
+            data: {
+              balance: {
+                increment: invoice.amount
+              }
+            }
+          })
+
+          console.log(`Баланс договора ${invoice.contract.contractNumber} пополнен на ${invoice.amount} ${invoice.currency}`)
+        }
+
+        return updatedInvoice
+      } catch (error) {
+        console.error('Ошибка обновления статуса счета:', error)
+        if (error instanceof Error) {
+          throw error
+        }
+        throw new Error('Не удалось обновить статус счета')
       }
     },
 

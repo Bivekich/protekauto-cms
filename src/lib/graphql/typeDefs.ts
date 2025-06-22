@@ -440,6 +440,8 @@ export const typeDefs = gql`
 
   type ClientContract {
     id: ID!
+    clientId: String!
+    client: Client!
     contractNumber: String!
     contractDate: DateTime!
     name: String!
@@ -455,6 +457,7 @@ export const typeDefs = gql`
     creditLimit: Float
     delayDays: Int
     fileUrl: String
+    balanceInvoices: [BalanceInvoice!]!
     createdAt: DateTime!
     updatedAt: DateTime!
   }
@@ -858,6 +861,9 @@ export const typeDefs = gql`
     user(id: ID!): User
     hasUsers: Boolean!
     me: User
+    
+    # Счета на пополнение баланса
+    balanceInvoices: [BalanceInvoice!]!
     auditLogs(limit: Int, offset: Int): [AuditLog!]!
     auditLogsCount: Int!
     
@@ -1055,6 +1061,7 @@ export const typeDefs = gql`
     createClientContract(clientId: ID!, input: ClientContractInput!): ClientContract!
     updateClientContract(id: ID!, input: ClientContractInput!): ClientContract!
     deleteClientContract(id: ID!): Boolean!
+    updateContractBalance(contractId: ID!, amount: Float!, comment: String): ClientContract!
     
     # Юридические лица
     createClientLegalEntity(clientId: ID!, input: ClientLegalEntityInput!): ClientLegalEntity!
@@ -1127,11 +1134,39 @@ export const typeDefs = gql`
     addToFavorites(input: FavoriteInput!): Favorite!
     removeFromFavorites(id: ID!): Boolean!
     clearFavorites: Boolean!
+    
+    # Счета на оплату
+    createBalanceInvoice(contractId: ID!, amount: Float!): BalanceInvoice!
+    updateInvoiceStatus(invoiceId: ID!, status: InvoiceStatus!): BalanceInvoice!
   }
 
   input LoginInput {
     email: String!
     password: String!
+  }
+
+  # Счета на оплату
+  type BalanceInvoice {
+    id: ID!
+    contractId: String!
+    contract: ClientContract!
+    amount: Float!
+    currency: String!
+    status: InvoiceStatus!
+    invoiceNumber: String!
+    qrCode: String!
+    pdfUrl: String
+    paymentUrl: String
+    expiresAt: DateTime!
+    createdAt: DateTime!
+    updatedAt: DateTime!
+  }
+
+  enum InvoiceStatus {
+    PENDING
+    PAID
+    EXPIRED
+    CANCELLED
   }
 
   # Скидки и промокоды

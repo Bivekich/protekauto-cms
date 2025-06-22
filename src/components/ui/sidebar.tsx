@@ -11,7 +11,8 @@ import {
   Activity,
   Package,
   UserCheck,
-  ShoppingCart
+  ShoppingCart,
+  Receipt
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/components/providers/AuthProvider'
@@ -40,6 +41,11 @@ const navigationItems = [
     title: 'Клиенты',
     href: '/dashboard/clients',
     icon: UserCheck,
+  },
+  {
+    title: 'Счета',
+    href: '/dashboard/invoices',
+    icon: Receipt,
   },
   {
     title: 'Менеджеры',

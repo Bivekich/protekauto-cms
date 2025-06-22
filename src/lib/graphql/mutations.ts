@@ -1102,4 +1102,14 @@ export const GET_FAVORITES = gql`
       createdAt
     }
   }
+`
+
+export const UPDATE_CONTRACT_BALANCE = gql`
+  mutation UpdateContractBalance($contractId: ID!, $amount: Float!, $comment: String) {
+    updateContractBalance(contractId: $contractId, amount: $amount, comment: $comment) {
+      id
+      balance
+      updatedAt
+    }
+  }
 ` 
