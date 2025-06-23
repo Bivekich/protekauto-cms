@@ -1112,4 +1112,57 @@ export const UPDATE_CONTRACT_BALANCE = gql`
       updatedAt
     }
   }
+`
+
+export const CREATE_BALANCE_INVOICE = gql`
+  mutation CreateBalanceInvoice($contractId: String!, $amount: Float!) {
+    createBalanceInvoice(contractId: $contractId, amount: $amount) {
+      id
+      invoiceNumber
+      amount
+      status
+      createdAt
+    }
+  }
+`
+
+export const GET_INVOICE_PDF = gql`
+  mutation GetInvoicePDF($invoiceId: String!) {
+    getInvoicePDF(invoiceId: $invoiceId) {
+      success
+      pdfBase64
+      filename
+      error
+    }
+  }
+`
+
+export const UPDATE_INVOICE_STATUS = gql`
+  mutation UpdateInvoiceStatus($invoiceId: String!, $status: InvoiceStatus!) {
+    updateInvoiceStatus(invoiceId: $invoiceId, status: $status) {
+      id
+      status
+      updatedAt
+    }
+  }
+`
+
+export const GET_DELIVERY_OFFERS = gql`
+  mutation GetDeliveryOffers($input: DeliveryOffersInput!) {
+    getDeliveryOffers(input: $input) {
+      success
+      message
+      error
+      offers {
+        id
+        name
+        deliveryDate
+        deliveryTime
+        cost
+        description
+        type
+        expiresAt
+      }
+    }
+  }
 ` 

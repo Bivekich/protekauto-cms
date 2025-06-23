@@ -10,6 +10,7 @@ import { autoEuroService } from '../autoeuro-service'
 import { yooKassaService } from '../yookassa-service'
 import { partsAPIService } from '../partsapi-service'
 import { yandexDeliveryService, YandexPickupPoint, getAddressSuggestions } from '../yandex-delivery-service'
+import { InvoiceService } from '../invoice-service'
 import * as csvWriter from 'csv-writer'
 import * as XLSX from 'xlsx'
 
@@ -542,6 +543,21 @@ export const resolvers = {
         include: { accessoryProducts: { include: { images: { orderBy: { order: 'asc' } } } } }
       })
       return product?.accessoryProducts || []
+    }
+  },
+
+  BalanceInvoice: {
+    clientId: async (parent: { contract: { clientId: string } }) => {
+      return parent.contract.clientId
+    },
+    expiresAt: (parent: { expiresAt: Date }) => {
+      return parent.expiresAt.toISOString()
+    },
+    createdAt: (parent: { createdAt: Date }) => {
+      return parent.createdAt.toISOString()
+    },
+    updatedAt: (parent: { updatedAt: Date }) => {
+      return parent.updatedAt.toISOString()
     }
   },
 
@@ -5445,30 +5461,14 @@ export const resolvers = {
       }
     },
 
-    updateInvoiceStatus: async (_: unknown, { invoiceId, status }: { invoiceId: string; status: string }, context: Context) => {
+    updateInvoiceStatus: async (_: any, { invoiceId, status }: { invoiceId: string; status: string }, context: any) => {
+      console.log('updateInvoiceStatus резолвер вызван:', { invoiceId, status });
+      
+      if (!context.userId || context.userRole !== 'ADMIN') {
+        throw new Error('Доступ запрещен. Требуются права администратора.');
+      }
+
       try {
-        const actualContext = context || getContext()
-        if (!actualContext.userId) {
-          throw new Error('Пользователь не авторизован')
-        }
-
-        // Находим счет
-        const invoice = await prisma.balanceInvoice.findUnique({
-          where: { id: invoiceId },
-          include: {
-            contract: {
-              include: {
-                client: true
-              }
-            }
-          }
-        })
-
-        if (!invoice) {
-          throw new Error('Счет не найден')
-        }
-
-        // Обновляем статус счета
         const updatedInvoice = await prisma.balanceInvoice.update({
           where: { id: invoiceId },
           data: { 
@@ -5478,33 +5478,123 @@ export const resolvers = {
           include: {
             contract: {
               include: {
-                client: true
+                client: {
+                  include: {
+                    legalEntities: true
+                  }
+                }
               }
             }
           }
-        })
+        });
 
-        // Если статус изменен на PAID, пополняем баланс договора
-        if (status === 'PAID' && invoice.status !== 'PAID') {
+        // Если статус изменился на PAID, пополняем баланс
+        if (status === 'PAID') {
           await prisma.clientContract.update({
-            where: { id: invoice.contractId },
+            where: { id: updatedInvoice.contractId },
             data: {
               balance: {
-                increment: invoice.amount
+                increment: updatedInvoice.amount
               }
             }
-          })
+          });
 
-          console.log(`Баланс договора ${invoice.contract.contractNumber} пополнен на ${invoice.amount} ${invoice.currency}`)
+          console.log(`✅ Баланс пополнен на ${updatedInvoice.amount} руб. для договора ${updatedInvoice.contractId}`);
         }
 
-        return updatedInvoice
+        return updatedInvoice;
       } catch (error) {
-        console.error('Ошибка обновления статуса счета:', error)
-        if (error instanceof Error) {
-          throw error
+        console.error('Ошибка обновления статуса счета:', error);
+        throw new Error('Не удалось обновить статус счета');
+      }
+    },
+
+    getInvoicePDF: async (_: any, { invoiceId }: { invoiceId: string }, context: any) => {
+      console.log('🔍 Получение PDF счета через GraphQL:', invoiceId);
+      
+      try {
+        // Получаем счет из базы данных
+        const invoice = await prisma.balanceInvoice.findUnique({
+          where: { id: invoiceId },
+          include: {
+            contract: {
+              include: {
+                client: {
+                  include: {
+                    legalEntities: true
+                  }
+                }
+              }
+            }
+          }
+        });
+
+        if (!invoice) {
+          return {
+            success: false,
+            error: 'Счет не найден'
+          };
         }
-        throw new Error('Не удалось обновить статус счета')
+
+        // Проверяем авторизацию
+        let hasAccess = false;
+        
+        console.log('🔍 Проверка доступа:', { 
+          userId: context.userId, 
+          userRole: context.userRole, 
+          clientId: context.clientId,
+          invoiceClientId: invoice.contract.clientId 
+        });
+        
+        // Админ имеет доступ ко всем счетам
+        if (context.userId && context.userRole === 'ADMIN') {
+          hasAccess = true;
+          console.log('✅ Доступ предоставлен администратору');
+        }
+        // Клиент имеет доступ только к своим счетам
+        else if (context.clientId && context.clientId === invoice.contract.clientId) {
+          hasAccess = true;
+          console.log('✅ Доступ предоставлен владельцу счета');
+        }
+
+        if (!hasAccess) {
+          return {
+            success: false,
+            error: 'Доступ запрещен'
+          };
+        }
+
+        // Преобразуем данные для генерации PDF
+        const legalEntity = invoice.contract.client.legalEntities[0];
+        const invoiceData = {
+          invoiceNumber: invoice.invoiceNumber,
+          amount: invoice.amount,
+          clientName: legalEntity?.shortName || invoice.contract.client.name,
+          clientInn: legalEntity?.inn,
+          clientAddress: legalEntity?.legalAddress,
+          contractNumber: invoice.contract.contractNumber,
+          description: `Пополнение баланса по договору ${invoice.contract.contractNumber}`,
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 дней
+        };
+
+        // Генерируем PDF
+        const pdfBuffer = await InvoiceService.generatePDF(invoiceData);
+        const pdfBase64 = pdfBuffer.toString('base64');
+        const filename = `Счет-${invoice.invoiceNumber}.pdf`;
+
+        console.log('✅ PDF успешно сгенерирован');
+        
+        return {
+          success: true,
+          pdfBase64,
+          filename
+        };
+      } catch (error) {
+        console.error('❌ Ошибка генерации PDF:', error);
+        return {
+          success: false,
+          error: 'Ошибка генерации PDF: ' + (error as Error).message
+        };
       }
     },
 
@@ -6793,6 +6883,143 @@ export const resolvers = {
           throw error
         }
         throw new Error('Не удалось очистить избранное')
+      }
+    },
+
+    // Мутация для получения офферов доставки
+    getDeliveryOffers: async (_: unknown, { input }: { 
+      input: {
+        items: Array<{
+          name: string;
+          article?: string;
+          brand?: string;
+          price: number;
+          quantity: number;
+          weight?: number;
+          dimensions?: string;
+        }>;
+        deliveryAddress: string;
+        recipientName: string;
+        recipientPhone: string;
+      }
+    }, context: Context) => {
+      try {
+        console.log('🚚 Получение офферов доставки для:', input.deliveryAddress)
+        
+        // Преобразуем данные для Яндекс API
+        const cartData = {
+          items: input.items.map((item, index) => ({
+            id: `item_${index}`,
+            name: item.name,
+            article: item.article || '',
+            price: item.price,
+            quantity: item.quantity,
+            weight: item.weight || 500, // 500г по умолчанию
+            dimensions: item.dimensions ? { dx: 10, dy: 10, dz: 5 } : { dx: 10, dy: 10, dz: 5 } // размеры по умолчанию
+          })),
+          deliveryAddress: input.deliveryAddress,
+          recipientName: input.recipientName,
+          recipientPhone: input.recipientPhone,
+          paymentMethod: 'already_paid' as const, // По умолчанию оплата уже произведена
+          deliveryType: 'courier' as const, // По умолчанию курьерская доставка
+        }
+        
+        // Получаем офферы от Яндекс Доставки
+        const offers = await yandexDeliveryService.createOfferFromCart(cartData)
+        
+        console.log('✅ Получены офферы доставки:', offers.offers.length)
+        
+        // Форматируем офферы для фронтенда
+        const formattedOffers = offers.offers.map(offer => {
+          const deliveryInterval = offer.offer_details?.delivery_interval
+          const pricing = offer.offer_details?.pricing
+          
+          let deliveryDate = 'Завтра'
+          let deliveryTime = '10:00-18:00'
+          let deliveryCost = 0
+          
+          if (deliveryInterval && typeof deliveryInterval === 'object' && 'min' in deliveryInterval) {
+            // Конвертируем Unix timestamp в дату
+            const minDate = new Date(deliveryInterval.min * 1000)
+            const maxDate = new Date(deliveryInterval.max * 1000)
+            
+            deliveryDate = minDate.toLocaleDateString('ru-RU', {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'long'
+            })
+            
+            deliveryTime = `${minDate.getHours().toString().padStart(2, '0')}:${minDate.getMinutes().toString().padStart(2, '0')}-${maxDate.getHours().toString().padStart(2, '0')}:${maxDate.getMinutes().toString().padStart(2, '0')}`
+          }
+          
+          if (pricing) {
+            // Парсим стоимость из строки типа "192.15 RUB"
+            const match = pricing.match(/(\d+(?:\.\d+)?)/);
+            if (match) {
+              deliveryCost = Math.round(parseFloat(match[1]))
+            }
+          }
+          
+          return {
+            id: offer.offer_id || `offer_${Date.now()}`,
+            name: 'Курьерская доставка',
+            deliveryDate,
+            deliveryTime,
+            cost: deliveryCost,
+            description: 'Доставка курьером до двери'
+          }
+        })
+        
+        // Если нет офферов от Яндекса, возвращаем стандартные варианты
+        if (formattedOffers.length === 0) {
+          console.log('⚠️ Нет офферов от Яндекс Доставки, возвращаем стандартные')
+          
+          const tomorrow = new Date()
+          tomorrow.setDate(tomorrow.getDate() + 1)
+          
+          const standardOffers = [
+            {
+              id: 'standard_courier',
+              name: 'Курьерская доставка',
+              deliveryDate: tomorrow.toLocaleDateString('ru-RU', {
+                weekday: 'short',
+                day: 'numeric',
+                month: 'long'
+              }),
+              deliveryTime: '10:00-18:00',
+              cost: 300, // Стандартная стоимость
+              description: 'Доставка курьером до двери'
+            }
+          ]
+          
+          return standardOffers
+        }
+        
+        return formattedOffers
+        
+      } catch (error) {
+        console.error('❌ Ошибка получения офферов доставки:', error)
+        
+        // В случае ошибки возвращаем стандартные варианты
+        const tomorrow = new Date()
+        tomorrow.setDate(tomorrow.getDate() + 1)
+        
+        const fallbackOffers = [
+          {
+            id: 'fallback_courier',
+            name: 'Курьерская доставка',
+            deliveryDate: tomorrow.toLocaleDateString('ru-RU', {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'long'
+            }),
+            deliveryTime: '10:00-18:00',
+            cost: 300,
+            description: 'Доставка курьером до двери'
+          }
+        ]
+        
+        return fallbackOffers
       }
     }
   }

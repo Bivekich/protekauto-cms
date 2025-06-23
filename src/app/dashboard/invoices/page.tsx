@@ -59,10 +59,21 @@ const GET_BALANCE_INVOICES = gql`
 `
 
 const UPDATE_INVOICE_STATUS = gql`
-  mutation UpdateInvoiceStatus($invoiceId: ID!, $status: InvoiceStatus!) {
+  mutation UpdateInvoiceStatus($invoiceId: String!, $status: InvoiceStatus!) {
     updateInvoiceStatus(invoiceId: $invoiceId, status: $status) {
       id
       status
+    }
+  }
+`
+
+const GET_INVOICE_PDF = gql`
+  mutation GetInvoicePDF($invoiceId: String!) {
+    getInvoicePDF(invoiceId: $invoiceId) {
+      success
+      pdfBase64
+      filename
+      error
     }
   }
 `
@@ -120,6 +131,8 @@ export default function InvoicesPage() {
     }
   })
 
+  const [getInvoicePDF] = useMutation(GET_INVOICE_PDF)
+
   const handleStatusUpdate = async (invoiceId: string, newStatus: string) => {
     try {
       await updateInvoiceStatus({
@@ -130,6 +143,43 @@ export default function InvoicesPage() {
       })
     } catch (error) {
       console.error('Ошибка обновления статуса:', error)
+    }
+  }
+
+  const handleDownloadPDF = async (invoiceId: string) => {
+    try {
+      const { data } = await getInvoicePDF({
+        variables: {
+          invoiceId
+        }
+      })
+
+      if (data?.getInvoicePDF?.success) {
+        const { pdfBase64, filename } = data.getInvoicePDF
+        
+        // Конвертируем base64 в blob и скачиваем
+        const byteCharacters = atob(pdfBase64)
+        const byteNumbers = new Array(byteCharacters.length)
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i)
+        }
+        const byteArray = new Uint8Array(byteNumbers)
+        const blob = new Blob([byteArray], { type: 'application/pdf' })
+        
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(a)
+      } else {
+        alert('Ошибка получения PDF: ' + (data?.getInvoicePDF?.error || 'Неизвестная ошибка'))
+      }
+    } catch (error) {
+      console.error('Ошибка скачивания PDF:', error)
+      alert('Ошибка скачивания PDF: ' + (error as Error).message)
     }
   }
 
@@ -276,10 +326,7 @@ export default function InvoicesPage() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => {
-                          const downloadUrl = `/api/invoice/${invoice.id}?admin=true`
-                          window.open(downloadUrl, '_blank')
-                        }}
+                        onClick={() => handleDownloadPDF(invoice.id)}
                       >
                         PDF
                       </Button>

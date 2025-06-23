@@ -1136,8 +1136,12 @@ export const typeDefs = gql`
     clearFavorites: Boolean!
     
     # Счета на оплату
-    createBalanceInvoice(contractId: ID!, amount: Float!): BalanceInvoice!
-    updateInvoiceStatus(invoiceId: ID!, status: InvoiceStatus!): BalanceInvoice!
+    createBalanceInvoice(contractId: String!, amount: Float!): BalanceInvoice!
+    updateInvoiceStatus(invoiceId: String!, status: InvoiceStatus!): BalanceInvoice!
+    getInvoicePDF(invoiceId: String!): InvoicePDFResult
+    
+    # Доставка Яндекс
+    getDeliveryOffers(input: DeliveryOffersInput!): [DeliveryOffer!]!
   }
 
   input LoginInput {
@@ -1148,18 +1152,16 @@ export const typeDefs = gql`
   # Счета на оплату
   type BalanceInvoice {
     id: ID!
+    invoiceNumber: String!
+    clientId: String!
     contractId: String!
-    contract: ClientContract!
     amount: Float!
     currency: String!
     status: InvoiceStatus!
-    invoiceNumber: String!
-    qrCode: String!
-    pdfUrl: String
-    paymentUrl: String
-    expiresAt: DateTime!
-    createdAt: DateTime!
-    updatedAt: DateTime!
+    expiresAt: String!
+    createdAt: String!
+    updatedAt: String!
+    contract: ClientContract!
   }
 
   enum InvoiceStatus {
@@ -1840,5 +1842,39 @@ export const typeDefs = gql`
     isYandexBranded: Boolean
     isPostOffice: Boolean
     type: YandexPickupPointType
+  }
+
+  type InvoicePDFResult {
+    success: Boolean!
+    pdfBase64: String
+    filename: String
+    error: String
+  }
+
+  # Типы для получения предложений доставки
+  input DeliveryOffersInput {
+    items: [DeliveryItemInput!]!
+    deliveryAddress: String!
+    recipientName: String!
+    recipientPhone: String!
+  }
+
+  input DeliveryItemInput {
+    name: String!
+    article: String
+    brand: String
+    price: Float!
+    quantity: Int!
+    weight: Float
+    dimensions: String
+  }
+
+  type DeliveryOffer {
+    id: String!
+    name: String!
+    description: String
+    deliveryDate: String
+    deliveryTime: String
+    cost: Float!
   }
 ` 

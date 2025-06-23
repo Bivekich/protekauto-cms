@@ -1,93 +1,53 @@
-FROM node:18.19.0-alpine
+# Используем Node.js LTS Alpine для минимального размера
+FROM node:18-alpine
 
-# Устанавливаем системные зависимости для Puppeteer
-RUN apk add --no-cache \
+# Устанавливаем рабочую директорию
+WORKDIR /app
+
+# Устанавливаем зависимости для Puppeteer
+RUN apk update && apk add --no-cache \
+    # Chromium и зависимости
     chromium \
     nss \
     freetype \
-    freetype-dev \
     harfbuzz \
     ca-certificates \
     ttf-freefont \
-    && rm -rf /var/cache/apk/*
+    # Дополнительные шрифты для русского языка
+    ttf-dejavu \
+    ttf-liberation \
+    # Системные зависимости
+    bash
 
-# Указываем Puppeteer использовать установленный Chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+# Устанавливаем переменные окружения для Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
-WORKDIR /app
+# Копируем package.json и package-lock.json
+COPY package*.json ./
 
-# Принимаем аргументы из docker-compose
-ARG BEELINE_SMS_USER
-ARG BEELINE_SMS_PASS
-ARG BEELINE_SMS_SENDER
-ARG DATABASE_URL
-ARG NEXTAUTH_SECRET
-ARG JWT_SECRET
-ARG AWS_REGION
-ARG AWS_ACCESS_KEY_ID
-ARG AWS_SECRET_ACCESS_KEY
-ARG AWS_BUCKET_NAME
-ARG AWS_S3_BUCKET
-ARG S3_ENDPOINT
-ARG NEXTAUTH_URL
-ARG LAXIMO_LOGIN
-ARG LAXIMO_PASSWORD
-ARG LAXIMO_DOC_LOGIN
-ARG LAXIMO_DOC_PASSWORD
-ARG YOOKASSA_SHOP_ID
-ARG YOOKASSA_SECRET_KEY
-ARG AUTOEURO_API_KEY
-ARG PARTSAPI_CATEGORIES_KEY
-ARG PARTSAPI_ARTICLES_KEY
-ARG PARTSAPI_MEDIA_KEY
-ARG YANDEX_MAPS_API_KEY
-ARG YANDEX_DELIVERY_TOKEN
-ARG YANDEX_GEOSUGGEST_API_KEY
+# Устанавливаем зависимости
+RUN npm ci --only=production
 
-# Копируем package файлы и устанавливаем зависимости
-COPY package.json package-lock.json* ./
-RUN npm install
-
-# Копируем весь проект
+# Копируем остальные файлы
 COPY . .
 
-# Создаем .env файл для сборки с переданными аргументами
-RUN echo "BEELINE_SMS_USER=${BEELINE_SMS_USER}" > .env && \
-    echo "BEELINE_SMS_PASS=${BEELINE_SMS_PASS}" >> .env && \
-    echo "BEELINE_SMS_SENDER=${BEELINE_SMS_SENDER:-Protekauto}" >> .env && \
-    echo "DATABASE_URL=${DATABASE_URL}" >> .env && \
-    echo "NEXTAUTH_SECRET=${NEXTAUTH_SECRET}" >> .env && \
-    echo "JWT_SECRET=${JWT_SECRET}" >> .env && \
-    echo "AWS_REGION=${AWS_REGION}" >> .env && \
-    echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" >> .env && \
-    echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" >> .env && \
-    echo "AWS_BUCKET_NAME=${AWS_BUCKET_NAME}" >> .env && \
-    echo "AWS_S3_BUCKET=${AWS_S3_BUCKET}" >> .env && \
-    echo "S3_ENDPOINT=${S3_ENDPOINT}" >> .env && \
-    echo "NEXTAUTH_URL=${NEXTAUTH_URL}" >> .env && \
-    echo "LAXIMO_LOGIN=${LAXIMO_LOGIN}" >> .env && \
-    echo "LAXIMO_PASSWORD=${LAXIMO_PASSWORD}" >> .env && \
-    echo "LAXIMO_DOC_LOGIN=${LAXIMO_DOC_LOGIN}" >> .env && \
-    echo "LAXIMO_DOC_PASSWORD=${LAXIMO_DOC_PASSWORD}" >> .env && \
-    echo "YOOKASSA_SHOP_ID=${YOOKASSA_SHOP_ID}" >> .env && \
-    echo "YOOKASSA_SECRET_KEY=${YOOKASSA_SECRET_KEY}" >> .env && \
-    echo "AUTOEURO_API_KEY=${AUTOEURO_API_KEY}" >> .env && \
-    echo "PARTSAPI_CATEGORIES_KEY=${PARTSAPI_CATEGORIES_KEY}" >> .env && \
-    echo "PARTSAPI_ARTICLES_KEY=${PARTSAPI_ARTICLES_KEY}" >> .env && \
-    echo "PARTSAPI_MEDIA_KEY=${PARTSAPI_MEDIA_KEY}" >> .env && \
-    echo "YANDEX_MAPS_API_KEY=${YANDEX_MAPS_API_KEY}" >> .env && \
-    echo "YANDEX_DELIVERY_TOKEN=${YANDEX_DELIVERY_TOKEN}" >> .env && \
-    echo "YANDEX_GEOSUGGEST_API_KEY=${YANDEX_GEOSUGGEST_API_KEY}" >> .env
-
 # Генерируем Prisma Client
-RUN npm run prisma:generate
+RUN npx prisma generate
 
 # Собираем приложение
 RUN npm run build
 
-# Удаляем .env файл после сборки (переменные будут переданы через environment в docker-compose)
-RUN rm -f .env
+# Создаем пользователя для безопасности (важно для Puppeteer)
+RUN addgroup -S pptruser && adduser -S -G pptruser pptruser \
+    && mkdir -p /home/pptruser/Downloads /app \
+    && chown -R pptruser:pptruser /home/pptruser \
+    && chown -R pptruser:pptruser /app
+
+# Переключаемся на непривилегированного пользователя
+USER pptruser
 
 # Открываем порт
 EXPOSE 3000
