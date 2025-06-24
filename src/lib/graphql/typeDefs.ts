@@ -919,6 +919,7 @@ export const typeDefs = gql`
     laximoFindVehiclesByPartNumber(partNumber: String!): LaximoVehiclesByPartResult!
     laximoVehicleInfo(catalogCode: String!, vehicleId: String!, ssd: String, localized: Boolean!): LaximoVehicleInfo
     laximoQuickGroups(catalogCode: String!, vehicleId: String, ssd: String): [LaximoQuickGroup!]!
+    laximoQuickGroupsWithXML(catalogCode: String!, vehicleId: String, ssd: String): LaximoQuickGroupsResponse!
     laximoCategories(catalogCode: String!, vehicleId: String, ssd: String): [LaximoQuickGroup!]!
     laximoUnits(catalogCode: String!, vehicleId: String, ssd: String, categoryId: String): [LaximoQuickGroup!]!
     laximoQuickDetail(catalogCode: String!, vehicleId: String!, quickGroupId: String!, ssd: String!): LaximoQuickDetail
@@ -1344,6 +1345,11 @@ export const typeDefs = gql`
     code: String
     imageurl: String
     largeimageurl: String
+  }
+  
+  type LaximoQuickGroupsResponse {
+    groups: [LaximoQuickGroup!]!
+    rawXML: String
   }
 
   type LaximoQuickDetail {

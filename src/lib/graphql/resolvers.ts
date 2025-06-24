@@ -1688,20 +1688,84 @@ export const resolvers = {
         console.log('🎯 GraphQL Resolver - результат от LaximoService:')
         console.log('📊 Общее количество групп:', groups.length)
         
-        // Логируем первые несколько групп
-        groups.slice(0, 3).forEach((group, index) => {
-          console.log(`📦 Группа ${index + 1} от service:`, {
-            id: group.quickgroupid,
+        // Логируем полную структуру данных от Laximo для отладки
+        console.log('🔍 ПОЛНЫЙ ОТВЕТ LAXIMO ListQuickGroup (JSON):')
+        console.log(JSON.stringify(groups, null, 2))
+        
+        // Дополнительная аналитика
+        const groupsWithLink = groups.filter(g => g.link).length
+        const groupsWithChildren = groups.filter(g => g.children && g.children.length > 0).length
+        const totalChildrenCount = groups.reduce((total, group) => {
+          const countChildren = (g: any): number => {
+            let count = 1
+            if (g.children) {
+              count += g.children.reduce((childTotal: number, child: any) => childTotal + countChildren(child), 0)
+            }
+            return count
+          }
+          return total + countChildren(group)
+        }, 0)
+        
+        console.log('📊 Аналитика групп быстрого поиска:')
+        console.log(`• Групп верхнего уровня: ${groups.length}`)
+        console.log(`• Групп с поддержкой деталей (link=true): ${groupsWithLink}`)
+        console.log(`• Групп с дочерними элементами: ${groupsWithChildren}`)
+        console.log(`• Общее количество всех групп (включая дочерние): ${totalChildrenCount}`)
+        
+        // Логируем структуру каждой группы верхнего уровня
+        groups.forEach((group, index) => {
+          console.log(`📦 Группа ${index + 1}:`, {
+            quickgroupid: group.quickgroupid,
             name: group.name,
             link: group.link,
+            code: group.code || 'отсутствует',
+            imageurl: group.imageurl ? 'есть' : 'отсутствует',
+            largeimageurl: group.largeimageurl ? 'есть' : 'отсутствует',
             children: group.children?.length || 0
           })
+          
+          // Если есть дочерние группы, логируем их тоже
+          if (group.children && group.children.length > 0) {
+            group.children.forEach((child, childIndex) => {
+              console.log(`  └─ Дочерняя группа ${childIndex + 1}:`, {
+                quickgroupid: child.quickgroupid,
+                name: child.name,
+                link: child.link,
+                code: child.code || 'отсутствует',
+                children: child.children?.length || 0
+              })
+            })
+          }
         })
         
         return groups
       } catch (error) {
-        console.error('Ошибка получения групп быстрого поиска:', error)
+        console.error('❌ Ошибка получения групп быстрого поиска:', error)
+        console.error('❌ Stack trace:', error instanceof Error ? error.stack : 'нет stack trace')
         return []
+      }
+    },
+
+    laximoQuickGroupsWithXML: async (_: unknown, { catalogCode, vehicleId, ssd }: { catalogCode: string; vehicleId: string; ssd?: string }) => {
+      try {
+        console.log('🔧 GraphQL Resolver - получение групп быстрого поиска с RAW XML:', { catalogCode, vehicleId, ssd: ssd?.substring(0, 30) })
+        
+        const result = await laximoService.getListQuickGroupWithXML(catalogCode, vehicleId, ssd)
+        
+        console.log('🎯 GraphQL Resolver - результат от LaximoService:')
+        console.log('📊 Общее количество групп:', result.groups.length)
+        console.log('📄 RAW XML длина:', result.rawXML.length)
+        
+        return {
+          groups: result.groups,
+          rawXML: result.rawXML
+        }
+      } catch (error) {
+        console.error('❌ Ошибка получения групп быстрого поиска с XML:', error)
+        return {
+          groups: [],
+          rawXML: ''
+        }
       }
     },
 

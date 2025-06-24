@@ -1302,13 +1302,21 @@ class LaximoService {
       const command = `ListQuickGroup:Locale=ru_RU|Catalog=${catalogCode}|VehicleId=${vehicleId}|ssd=${ssd}`
       const hmac = this.createHMAC(command)
       
-      console.log('📝 Command:', command)
+      console.log('📝 Laximo ListQuickGroup Command:', command)
       console.log('🔗 HMAC:', hmac)
+      console.log('👤 Login:', this.login)
+      console.log('🏭 SOAP URL:', this.soap11Url)
       
       const soapEnvelope = this.createSOAP11Envelope(command, this.login, hmac)
+      console.log('📦 Создан SOAP envelope для ListQuickGroup')
+      
       const xmlText = await this.makeBasicSOAPRequest(this.soap11Url, soapEnvelope, 'urn:QueryDataLogin')
       
-      return this.parseListQuickGroupResponse(xmlText)
+      console.log('🎯 Начинаем парсинг XML ответа от Laximo...')
+      const result = this.parseListQuickGroupResponse(xmlText)
+      console.log('✅ Парсинг завершен, получено групп:', result.length)
+      
+      return result
     } catch (error) {
       console.error('Ошибка получения групп быстрого поиска:', error)
       
@@ -1333,9 +1341,68 @@ class LaximoService {
   }
 
   /**
+   * Получение групп быстрого поиска с RAW XML ответом
+   */
+  async getListQuickGroupWithXML(catalogCode: string, vehicleId: string, ssd?: string): Promise<{ groups: LaximoQuickGroup[], rawXML: string }> {
+    console.log('🔍 Получаем группы быстрого поиска с RAW XML для автомобиля:', vehicleId)
+    console.log('📋 Входные параметры - SSD:', ssd ? `${ssd.substring(0, 50)}...` : 'отсутствует')
+    
+    // Для автомобилей найденных через wizard, SSD является обязательным
+    if (!ssd || ssd.trim() === '') {
+      console.log('⚠️ SSD не предоставлен, пробуем альтернативные методы...')
+      
+      // Попробуем общие группы каталога
+      try {
+        const catalogCommand = `ListQuickGroup:Locale=ru_RU|Catalog=${catalogCode}`
+        const catalogHmac = this.createHMAC(catalogCommand)
+        console.log('📝 Catalog command:', catalogCommand)
+        
+        const soapEnvelope = this.createSOAP11Envelope(catalogCommand, this.login, catalogHmac)
+        const xmlText = await this.makeBasicSOAPRequest(this.soap11Url, soapEnvelope, 'urn:QueryDataLogin')
+        
+        const groups = this.parseListQuickGroupResponse(xmlText)
+        return { groups, rawXML: xmlText }
+      } catch (catalogError) {
+        console.error('Ошибка получения общих групп каталога:', catalogError)
+        return { groups: [], rawXML: '' }
+      }
+    }
+
+    try {
+      const command = `ListQuickGroup:Locale=ru_RU|Catalog=${catalogCode}|VehicleId=${vehicleId}|ssd=${ssd}`
+      const hmac = this.createHMAC(command)
+      
+      console.log('📝 Laximo ListQuickGroup Command:', command)
+      console.log('🔗 HMAC:', hmac)
+      console.log('👤 Login:', this.login)
+      console.log('🏭 SOAP URL:', this.soap11Url)
+      
+      const soapEnvelope = this.createSOAP11Envelope(command, this.login, hmac)
+      console.log('📦 Создан SOAP envelope для ListQuickGroup')
+      
+      const xmlText = await this.makeBasicSOAPRequest(this.soap11Url, soapEnvelope, 'urn:QueryDataLogin')
+      
+      console.log('🎯 Начинаем парсинг XML ответа от Laximo...')
+      const groups = this.parseListQuickGroupResponse(xmlText)
+      console.log('✅ Парсинг завершен, получено групп:', groups.length)
+      
+      return { groups, rawXML: xmlText }
+    } catch (error) {
+      console.error('Ошибка получения групп быстрого поиска:', error)
+      return { groups: [], rawXML: '' }
+    }
+  }
+
+  /**
    * Базовый SOAP запрос без парсинга каталогов
    */
   protected async makeBasicSOAPRequest(url: string, soapEnvelope: string, soapAction: string): Promise<string> {
+    console.log('🌐 Laximo SOAP запрос:')
+    console.log('📍 URL:', url)
+    console.log('🎯 SOAPAction:', soapAction)
+    console.log('📤 SOAP Envelope (первые 500 символов):')
+    console.log(soapEnvelope.substring(0, 500) + '...')
+    
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -1358,6 +1425,12 @@ class LaximoService {
     }
 
     const xmlText = await response.text()
+    
+    // Логируем полный RAW XML ответ от Laximo для отладки
+    console.log('📥 RAW XML ОТВЕТ ОТ LAXIMO:')
+    console.log('═'.repeat(80))
+    console.log(xmlText)
+    console.log('═'.repeat(80))
     
     // Проверяем на ошибки в ответе
     if (xmlText.includes('E_ACCESSDENIED')) {
