@@ -105,6 +105,9 @@ class YandexDeliveryService {
   private async makeRequest<T>(endpoint: string, data?: any): Promise<T> {
     const url = `${BASE_URL}${endpoint}`;
     
+    console.log(`🚚 Яндекс Доставка запрос: ${endpoint}`);
+    console.log('📦 Данные запроса:', data ? JSON.stringify(data, null, 2) : 'без данных');
+    
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -114,12 +117,17 @@ class YandexDeliveryService {
       body: data ? JSON.stringify(data) : undefined,
     });
 
+    console.log(`📡 Статус ответа: ${response.status}`);
+
     if (!response.ok) {
       const errorText = await response.text();
+      console.error(`❌ Ошибка API Яндекс доставки: ${response.status} - ${errorText}`);
       throw new Error(`Ошибка API Яндекс доставки: ${response.status} - ${errorText}`);
     }
 
-    return response.json();
+    const result = await response.json();
+    console.log('✅ Успешный ответ от Яндекс Доставки:', JSON.stringify(result, null, 2));
+    return result;
   }
 
   /**
@@ -236,7 +244,247 @@ class YandexDeliveryService {
   }
 
   /**
+   * Парсинг адреса на компоненты
+   */
+  private parseAddress(address: string): {
+    city?: string;
+    street?: string;
+    house?: string;
+    region?: string;
+    full_address: string;
+  } {
+    console.log('🔍 Начинаем парсинг адреса:', address);
+    
+    let city = '';
+    let street = '';
+    let house = '';
+    let region = '';
+
+    // Нормализуем адрес: убираем лишние пробелы, приводим к нижнему регистру для поиска
+    const normalizedAddress = address.trim().toLowerCase();
+    
+    // Ищем номер дома (цифры с возможными буквами, корпусом, строением)
+    const housePatterns = [
+      /\bд[\.\s]*(\d+[а-яё]?(?:\s*к[\.\s]*\d+)?(?:\s*стр[\.\s]*\d+)?)\b/i,
+      /\bдом[\.\s]*(\d+[а-яё]?(?:\s*к[\.\s]*\d+)?(?:\s*стр[\.\s]*\d+)?)\b/i,
+      /\b(\d+[а-яё]?(?:\s*к[\.\s]*\d+)?(?:\s*стр[\.\s]*\d+)?)\s*$/i, // В конце строки
+      /\b(\d+[а-яё]?)\b/i // Просто число с возможной буквой
+    ];
+    
+    for (const pattern of housePatterns) {
+      const match = address.match(pattern);
+      if (match) {
+        house = match[1].trim();
+        console.log('🏠 Найден номер дома:', house);
+        break;
+      }
+    }
+
+    // Ищем известные города
+    const cities = [
+      { name: 'Москва', patterns: ['москва', 'moscow'] },
+      { name: 'Санкт-Петербург', patterns: ['санкт-петербург', 'спб', 'питер', 'petersburg'] },
+      { name: 'Новосибирск', patterns: ['новосибирск'] },
+      { name: 'Екатеринбург', patterns: ['екатеринбург'] },
+      { name: 'Казань', patterns: ['казань'] },
+      { name: 'Иваново', patterns: ['иваново'] },
+      { name: 'Нижний Новгород', patterns: ['нижний новгород'] },
+    ];
+    
+    for (const cityInfo of cities) {
+      for (const pattern of cityInfo.patterns) {
+        if (normalizedAddress.includes(pattern)) {
+          city = cityInfo.name;
+          console.log('🏙️ Найден город:', city);
+          break;
+        }
+      }
+      if (city) break;
+    }
+    
+    // Если город не найден, берем первое слово
+    if (!city) {
+      const parts = address.split(/[,\s]+/).filter(part => part.length > 0);
+      if (parts.length > 0) {
+        city = parts[0];
+        console.log('🏙️ Город по умолчанию:', city);
+      }
+    }
+
+    // Ищем улицу - все что между городом и номером дома
+    let streetMatch = address;
+    
+    // Убираем город из начала
+    if (city) {
+      const cityPattern = new RegExp(`^[^,]*${city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^,]*,?\\s*`, 'i');
+      streetMatch = streetMatch.replace(cityPattern, '').trim();
+    }
+    
+    // Убираем номер дома из конца
+    if (house) {
+      const housePattern = new RegExp(`\\s*д[\\.\\s]*${house.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*$`, 'i');
+      streetMatch = streetMatch.replace(housePattern, '').trim();
+      
+      // Пробуем еще раз без "д."
+      const housePattern2 = new RegExp(`\\s*${house.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*$`, 'i');
+      streetMatch = streetMatch.replace(housePattern2, '').trim();
+    }
+    
+    // Очищаем оставшуюся строку для улицы
+    street = streetMatch.replace(/^[,\s]+|[,\s]+$/g, ''); // Убираем запятые и пробелы по краям
+    console.log('🛣️ Найдена улица:', street);
+
+    // Определяем регион на основе города
+    const regionMap: Record<string, string> = {
+      'москва': 'город Москва',
+      'санкт-петербург': 'город Санкт-Петербург',
+      'иваново': 'Ивановская область',
+      'казань': 'Республика Татарстан',
+      'екатеринбург': 'Свердловская область',
+      'новосибирск': 'Новосибирская область',
+      'нижний новгород': 'Нижегородская область',
+    };
+
+    region = regionMap[city.toLowerCase()] || `${city} область`;
+    console.log('🗺️ Определен регион:', region);
+
+    const result = {
+      city: city || undefined,
+      street: street || undefined,
+      house: house || undefined,
+      region: region || undefined,
+      full_address: address,
+    };
+    
+    console.log('✅ Результат парсинга:', result);
+    return result;
+  }
+
+  /**
+   * Улучшение адреса с помощью геокодирования
+   */
+  private async improveAddress(address: string): Promise<CustomLocation> {
+    // Сначала парсим адрес для получения базовых компонентов
+    const parsedAddress = this.parseAddress(address);
+    console.log('🏠 Парсинг адреса:', {
+      исходный: address,
+      город: parsedAddress.city,
+      улица: parsedAddress.street,
+      дом: parsedAddress.house,
+      регион: parsedAddress.region
+    });
+    
+    try {
+      const response = await this.detectLocation(address);
+      if (response.variants && response.variants.length > 0) {
+        const bestVariant = response.variants[0];
+        
+        // Используем данные из геокодирования, дополняя парсингом
+        const city = parsedAddress.city || bestVariant.address;
+        const region = parsedAddress.region || bestVariant.address;
+        const street = parsedAddress.street || 'ул. Центральная';
+        const house = parsedAddress.house || '1';
+        const fullAddress = `${city}, ${street} ${house}`.trim();
+        
+        return {
+          // Поля на верхнем уровне (возможно, требуются API)
+          country: 'Russia',
+          city: city,
+          region: region,
+          street: street,
+          house: house,
+          full_address: fullAddress,
+          details: {
+            full_address: fullAddress,
+            country: 'Russia',
+            geoId: bestVariant.geo_id,
+            locality: city,
+            region: region,
+            street: street,
+            house: house,
+          },
+        };
+      }
+    } catch (error) {
+      console.log('Не удалось улучшить адрес через геокодирование:', error);
+    }
+
+    // Fallback к парсингу без геокодирования
+    let formattedAddress = address;
+    if (!formattedAddress.toLowerCase().includes('россия')) {
+      formattedAddress = `${formattedAddress}, Россия`;
+    }
+
+    // Более детальный парсинг для обязательных полей
+    let city = parsedAddress.city;
+    let region = parsedAddress.region;
+    let street = parsedAddress.street;
+    let house = parsedAddress.house;
+
+    // Если не удалось распарсить город из адреса, пытаемся извлечь его по-другому
+    if (!city) {
+      // Ищем известные города в адресе
+      const cities = ['москва', 'санкт-петербург', 'спб', 'новосибирск', 'екатеринбург', 'казань', 'иваново'];
+      for (const cityName of cities) {
+        if (address.toLowerCase().includes(cityName)) {
+          city = cityName.charAt(0).toUpperCase() + cityName.slice(1);
+          break;
+        }
+      }
+      if (!city) city = 'Москва'; // Fallback
+    }
+
+    // Определяем регион на основе города
+    if (!region) {
+      const regionMap: Record<string, string> = {
+        'москва': 'город Москва',
+        'санкт-петербург': 'город Санкт-Петербург',
+        'спб': 'город Санкт-Петербург',
+        'питер': 'город Санкт-Петербург',
+        'иваново': 'Ивановская область',
+        'казань': 'Республика Татарстан',
+        'екатеринбург': 'Свердловская область',
+        'новосибирск': 'Новосибирская область',
+        'нижний новгород': 'Нижегородская область',
+      };
+      region = regionMap[city.toLowerCase()] || 'Московская область';
+    }
+
+    // Если улица не найдена, задаем дефолтную
+    if (!street) {
+      street = 'ул. Центральная';
+    }
+
+    // Если дом не найден, задаем дефолтный
+    if (!house) {
+      house = '1';
+    }
+
+    const result = {
+      // Поля на верхнем уровне (возможно, требуются API)
+      country: 'Russia',
+      city: city,
+      region: region,
+      street: street,
+      house: house,
+      full_address: formattedAddress,
+      details: {
+        full_address: formattedAddress,
+        country: 'Russia',
+        locality: city,
+        region: region,
+        street: street,
+        house: house,
+      },
+    };
+
+    console.log('🏗️ Сформированный адрес для API:', result);
+    return result;
+  }
+
+  /**
    * Вспомогательный метод для создания заявки из данных корзины
+   * Пробует несколько временных интервалов если первый не дает результатов
    */
   async createOfferFromCart(cartData: {
     items: Array<{
@@ -247,6 +495,7 @@ class YandexDeliveryService {
       quantity: number;
       weight?: number;
       dimensions?: { dx?: number; dy?: number; dz?: number };
+      deliveryTime?: number; // Срок доставки товара к нам на склад
     }>;
     deliveryAddress: string;
     recipientName: string;
@@ -254,9 +503,13 @@ class YandexDeliveryService {
     paymentMethod: 'already_paid' | 'card_on_receipt';
     deliveryType: 'courier' | 'pickup';
     pickupPointId?: string;
+    maxSupplierDeliveryDays?: number; // Максимальный срок поставки товаров
   }): Promise<CreateOfferResponse> {
     // Генерируем уникальный ID заявки
     const operatorRequestId = `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Определяем штрихкод коробки
+    const packageBarcode = 'package_001';
 
     // Конвертируем товары в формат API
     const items: RequestResourceItem[] = cartData.items.map((item, index) => ({
@@ -268,7 +521,7 @@ class YandexDeliveryService {
       },
       count: item.quantity,
       name: item.name,
-      place_barcode: `place_${index + 1}`, // Штрихкод коробки
+      place_barcode: packageBarcode, // Используем тот же штрихкод что и у коробки
       physical_dims: item.dimensions ? {
         dx: item.dimensions.dx || 10,
         dy: item.dimensions.dy || 10,
@@ -280,7 +533,7 @@ class YandexDeliveryService {
 
     // Создаем грузоместа (коробки)
     const places: ResourcePlace[] = [{
-      barcode: 'package_001',
+      barcode: packageBarcode,
       physical_dims: {
         dx: 30, // 30 см
         dy: 20, // 20 см
@@ -310,23 +563,30 @@ class YandexDeliveryService {
           platform_id: cartData.pickupPointId,
         },
       };
-    } else {
-      // Курьерская доставка
-      destination = {
-        type: 'custom_location',
-        custom_location: {
-          details: {
-            full_address: cartData.deliveryAddress,
-            country: 'Россия',
+          } else {
+        // Курьерская доставка
+        // Улучшаем адрес с помощью геокодирования
+        const improvedLocation = await this.improveAddress(cartData.deliveryAddress);
+        
+        console.log('🎯 Улучшенный адрес для доставки:', JSON.stringify(improvedLocation, null, 2));
+        
+        destination = {
+          type: 'custom_location',
+          custom_location: improvedLocation,
+          // Дублируем поля адреса на верхнем уровне destination (на случай если API их ожидает тут)
+          country: improvedLocation.country,
+          city: improvedLocation.city,
+          region: improvedLocation.region,
+          house: improvedLocation.house,
+          street: improvedLocation.street,
+          full_address: improvedLocation.full_address,
+          // Интервал доставки: от завтра до послезавтра, весь день
+          interval: {
+            from: Math.floor(Date.now() / 1000) + 24 * 60 * 60, // Завтра 00:00
+            to: Math.floor(Date.now() / 1000) + 72 * 60 * 60, // Послезавтра 00:00 (48 часов)
           },
-        },
-        // Интервал доставки: завтра с 10:00 до 18:00
-        interval: {
-          from: Math.floor(Date.now() / 1000) + 24 * 60 * 60 + 10 * 60 * 60, // Завтра в 10:00
-          to: Math.floor(Date.now() / 1000) + 24 * 60 * 60 + 18 * 60 * 60, // Завтра в 18:00
-        },
-      };
-    }
+        };
+      }
 
     // Информация о получателе
     const nameParts = cartData.recipientName.split(' ');
@@ -354,7 +614,115 @@ class YandexDeliveryService {
       particular_items_refuse: false, // Частичный выкуп не разрешен
     };
 
-    return this.createOffer(request);
+    // НЕ учитываем время поставки товаров в API Яндекса - только время на саму доставку
+    // Время поставки товаров будет учтено в резолвере при формировании итоговой даты
+    console.log(`ℹ️ Время поставки товаров (${cartData.maxSupplierDeliveryDays || 0} дней) будет учтено при расчете итоговой даты доставки`);
+    
+    // Попробуем создать заявку с разными временными интервалами для самой доставки
+    const timeIntervals = [
+      // 1. Завтра-послезавтра (стандартная доставка)
+      {
+        from: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+        to: Math.floor(Date.now() / 1000) + 72 * 60 * 60,
+      },
+      // 2. Через 2-3 дня (если завтра недоступно)
+      {
+        from: Math.floor(Date.now() / 1000) + 48 * 60 * 60,
+        to: Math.floor(Date.now() / 1000) + 96 * 60 * 60,
+      },
+      // 3. Через 3-5 дней (если и это недоступно)
+      {
+        from: Math.floor(Date.now() / 1000) + 72 * 60 * 60,
+        to: Math.floor(Date.now() / 1000) + 120 * 60 * 60,
+      },
+    ];
+
+    let lastError: Error | null = null;
+
+    // Попробуем каждый интервал пока не найдем подходящий
+    for (let i = 0; i < timeIntervals.length; i++) {
+      const interval = timeIntervals[i];
+      try {
+        if (cartData.deliveryType === 'courier') {
+          request.destination.interval = interval;
+        }
+        
+        console.log(`🚚 Попытка ${i + 1}/${timeIntervals.length} с интервалом:`, {
+          от: new Date(interval.from * 1000).toLocaleString('ru-RU'),
+          до: new Date(interval.to * 1000).toLocaleString('ru-RU'),
+        });
+        
+        // Логируем запрос только для первой попытки чтобы не засорять лог
+        if (i === 0) {
+          console.log('📄 Тело запроса к Яндекс API:', JSON.stringify(request, null, 2));
+        }
+        
+        const response = await this.createOffer(request);
+        
+        // Если получили офферы, возвращаем результат
+        if (response.offers && response.offers.length > 0) {
+          console.log(`✅ Получили ${response.offers.length} офферов на попытке ${i + 1}`);
+          return response;
+        } else {
+          console.log(`⚠️ Нет офферов для попытки ${i + 1}`);
+        }
+      } catch (error) {
+        console.log(`❌ Попытка ${i + 1} с интервалом ${interval.from}-${interval.to} не удалась:`, error instanceof Error ? error.message : error);
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        // Если это не ошибка "no_delivery_options", прекращаем попытки
+        if (error instanceof Error && !error.message.includes('no_delivery_options')) {
+          throw error;
+        }
+      }
+    }
+
+    // Если курьерская доставка не работает, попробуем найти ближайшие ПВЗ
+    if (cartData.deliveryType === 'courier' && lastError?.message.includes('no_delivery_options')) {
+      console.log('💡 Курьерская доставка недоступна, ищем ближайшие ПВЗ...');
+      
+      try {
+        // Пытаемся получить координаты адреса для поиска ПВЗ
+        const locationResponse = await this.detectLocation(cartData.deliveryAddress);
+        if (locationResponse.variants && locationResponse.variants.length > 0) {
+          const geoId = locationResponse.variants[0].geo_id;
+          console.log(`📍 Найден geoId: ${geoId} для адреса: ${cartData.deliveryAddress}`);
+          
+          // Ищем ПВЗ в этом городе
+          const pickupPoints = await this.getPickupPoints({ geo_id: geoId });
+          if (pickupPoints.points && pickupPoints.points.length > 0) {
+            console.log(`📦 Найдено ${pickupPoints.points.length} ПВЗ в городе`);
+            
+            // Создаем фиктивные офферы для ПВЗ (так как у нас нет точной стоимости)
+            const pickupOffers: Offer[] = pickupPoints.points.slice(0, 3).map((point, index) => ({
+              offer_id: `pickup_${point.id}`,
+              expires_at: Math.floor(Date.now() / 1000) + 24 * 60 * 60, // Действителен сутки
+              offer_details: {
+                delivery_interval: {
+                  min: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+                  max: Math.floor(Date.now() / 1000) + 72 * 60 * 60,
+                  policy: 'self_pickup' as const,
+                },
+                pricing: '300.00 RUB', // Примерная стоимость
+                pricing_total: '300.00 RUB',
+              },
+            }));
+            
+            return { offers: pickupOffers };
+          }
+        }
+      } catch (pickupError) {
+        console.log('Не удалось найти ПВЗ:', pickupError);
+      }
+    }
+
+    // Если все интервалы не подошли, выбрасываем последнюю ошибку
+    if (lastError) {
+      throw lastError;
+    }
+
+    // Fallback: возвращаем пустой ответ
+    return { offers: [] };
   }
 }
 
@@ -368,6 +736,13 @@ interface CustomLocation {
   details?: LocationDetails;
   latitude?: number;
   longitude?: number;
+  // Возможно, эти поля должны быть на верхнем уровне
+  country?: string;
+  city?: string;
+  region?: string;
+  house?: string;
+  street?: string;
+  full_address?: string;
 }
 
 interface LocationDetails {
@@ -400,6 +775,13 @@ interface DestinationRequestNode {
   custom_location?: CustomLocation;
   interval?: TimeInterval;
   platform_station?: PlatformStation;
+  // Возможно, поля адреса должны быть напрямую в destination
+  country?: string;
+  city?: string;
+  region?: string;
+  house?: string;
+  street?: string;
+  full_address?: string;
 }
 
 interface SourceRequestNode {

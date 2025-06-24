@@ -1143,7 +1143,7 @@ export const typeDefs = gql`
     getInvoicePDF(invoiceId: String!): InvoicePDFResult
     
     # Доставка Яндекс
-    getDeliveryOffers(input: DeliveryOffersInput!): [DeliveryOffer!]!
+    getDeliveryOffers(input: DeliveryOffersInput!): DeliveryOffersResponse!
   }
 
   input LoginInput {
@@ -1874,6 +1874,9 @@ export const typeDefs = gql`
     quantity: Int!
     weight: Float
     dimensions: String
+    deliveryTime: Int
+    offerKey: String
+    isExternal: Boolean
   }
 
   type DeliveryOffer {
@@ -1883,6 +1886,15 @@ export const typeDefs = gql`
     deliveryDate: String
     deliveryTime: String
     cost: Float!
+    type: String
+    expiresAt: String
+  }
+
+  type DeliveryOffersResponse {
+    success: Boolean!
+    message: String
+    error: String
+    offers: [DeliveryOffer!]!
   }
 
   # Типы для поиска брендов по коду

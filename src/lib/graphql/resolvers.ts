@@ -7006,17 +7006,33 @@ export const resolvers = {
           quantity: number;
           weight?: number;
           dimensions?: string;
+          deliveryTime?: number; // Срок доставки товара к нам на склад
+          offerKey?: string; // Для внешних товаров
+          isExternal?: boolean; // Флаг внешнего товара
         }>;
         deliveryAddress: string;
         recipientName: string;
         recipientPhone: string;
       }
     }, context: Context) => {
+      // Вычисляем максимальный срок доставки товаров к нам на склад (вне try блока для доступа в catch)
+      const maxSupplierDeliveryDays = Math.max(
+        ...input.items.map(item => item.deliveryTime || 0)
+      );
+      
       try {
         console.log('🚚 Получение офферов доставки для:', input.deliveryAddress)
         
-        // Преобразуем данные для Яндекс API
-        const cartData = {
+        console.log('📦 Максимальный срок поставки товаров на склад:', maxSupplierDeliveryDays, 'дней')
+        console.log('📋 Товары в заказе:', input.items.map(item => ({
+          name: item.name,
+          article: item.article,
+          deliveryTime: item.deliveryTime,
+          isExternal: item.isExternal
+        })))
+        
+        // Общие данные для Яндекс API
+        const baseCartData = {
           items: input.items.map((item, index) => ({
             id: `item_${index}`,
             name: item.name,
@@ -7024,41 +7040,107 @@ export const resolvers = {
             price: item.price,
             quantity: item.quantity,
             weight: item.weight || 500, // 500г по умолчанию
-            dimensions: item.dimensions ? { dx: 10, dy: 10, dz: 5 } : { dx: 10, dy: 10, dz: 5 } // размеры по умолчанию
+            dimensions: item.dimensions ? { dx: 10, dy: 10, dz: 5 } : { dx: 10, dy: 10, dz: 5 }, // размеры по умолчанию
+            deliveryTime: item.deliveryTime || 0, // Передаем срок поставки товара
           })),
           deliveryAddress: input.deliveryAddress,
           recipientName: input.recipientName,
           recipientPhone: input.recipientPhone,
           paymentMethod: 'already_paid' as const, // По умолчанию оплата уже произведена
-          deliveryType: 'courier' as const, // По умолчанию курьерская доставка
+          maxSupplierDeliveryDays: maxSupplierDeliveryDays, // Передаем максимальный срок поставки
         }
         
-        // Получаем офферы от Яндекс Доставки
-        const offers = await yandexDeliveryService.createOfferFromCart(cartData)
+        const allOffers: any[] = []
         
-        console.log('✅ Получены офферы доставки:', offers.offers.length)
+        // 1. Пробуем курьерскую доставку
+        try {
+          console.log('🚚 Пробуем курьерскую доставку...')
+          const courierData = { ...baseCartData, deliveryType: 'courier' as const }
+          const courierOffers = await yandexDeliveryService.createOfferFromCart(courierData)
+          
+          if (courierOffers.offers && courierOffers.offers.length > 0) {
+            console.log(`✅ Найдено ${courierOffers.offers.length} офферов курьерской доставки`)
+            allOffers.push(...courierOffers.offers.map(offer => ({ ...offer, delivery_type: 'courier' })))
+          }
+        } catch (error) {
+          console.log('⚠️ Курьерская доставка недоступна:', error instanceof Error ? error.message : 'Неизвестная ошибка')
+        }
+        
+        // 2. Пробуем ПВЗ
+        try {
+          console.log('📦 Пробуем доставку в ПВЗ...')
+          const pickupData = { ...baseCartData, deliveryType: 'pickup' as const }
+          const pickupOffers = await yandexDeliveryService.createOfferFromCart(pickupData)
+          
+          if (pickupOffers.offers && pickupOffers.offers.length > 0) {
+            console.log(`✅ Найдено ${pickupOffers.offers.length} офферов доставки в ПВЗ`)
+            allOffers.push(...pickupOffers.offers.map(offer => ({ ...offer, delivery_type: 'pickup' })))
+          }
+        } catch (error) {
+          console.log('⚠️ Доставка в ПВЗ недоступна:', error instanceof Error ? error.message : 'Неизвестная ошибка')
+        }
+        
+        console.log('✅ Всего получено офферов:', allOffers.length)
+        
+        // Удаляем дубликаты офферов с одинаковыми delivery_type
+        const uniqueOffers = allOffers.reduce((acc, current) => {
+          const existingOffer = acc.find(offer => offer.delivery_type === current.delivery_type)
+          if (!existingOffer) {
+            acc.push(current)
+          }
+          return acc
+        }, [] as any[])
+        
+        console.log(`🔄 Удалены дубликаты: ${allOffers.length} → ${uniqueOffers.length} офферов`)
         
         // Форматируем офферы для фронтенда
-        const formattedOffers = offers.offers.map(offer => {
+        const formattedOffers = uniqueOffers.map((offer, index) => {
           const deliveryInterval = offer.offer_details?.delivery_interval
           const pricing = offer.offer_details?.pricing
+          const deliveryType = offer.delivery_type || 'courier'
           
-          let deliveryDate = 'Завтра'
+          console.log('📅 Обработка оффера:', {
+            offer_id: offer.offer_id,
+            delivery_type: deliveryType,
+            delivery_interval: deliveryInterval,
+            pricing: pricing
+          })
+          
+          // Правильно вычисляем дату доставки с учетом срока поставки товара
+          const today = new Date()
+          const deliveryDate = new Date(today)
+          deliveryDate.setDate(today.getDate() + maxSupplierDeliveryDays + 1) // +1 день на саму доставку
+          
           let deliveryTime = '10:00-18:00'
           let deliveryCost = 0
           
           if (deliveryInterval && typeof deliveryInterval === 'object' && 'min' in deliveryInterval) {
-            // Конвертируем Unix timestamp в дату
-            const minDate = new Date(deliveryInterval.min * 1000)
-            const maxDate = new Date(deliveryInterval.max * 1000)
+            // Проверяем, если это Unix timestamp
+            let minDate: Date, maxDate: Date
             
-            deliveryDate = minDate.toLocaleDateString('ru-RU', {
-              weekday: 'short',
-              day: 'numeric',
-              month: 'long'
-            })
+            if (typeof deliveryInterval.min === 'number' && deliveryInterval.min > 1000000000) {
+              // Это Unix timestamp в секундах
+              minDate = new Date(deliveryInterval.min * 1000)
+              maxDate = new Date(deliveryInterval.max * 1000)
+            } else {
+              // Это ISO строка или timestamp в миллисекундах
+              minDate = new Date(deliveryInterval.min)
+              maxDate = new Date(deliveryInterval.max)
+            }
             
-            deliveryTime = `${minDate.getHours().toString().padStart(2, '0')}:${minDate.getMinutes().toString().padStart(2, '0')}-${maxDate.getHours().toString().padStart(2, '0')}:${maxDate.getMinutes().toString().padStart(2, '0')}`
+            // Проверяем, что даты валидны
+            if (!isNaN(minDate.getTime()) && !isNaN(maxDate.getTime())) {
+              // Используем минимальную дату из интервала + время поставки товара
+              const calculatedDate = new Date(minDate)
+              calculatedDate.setDate(minDate.getDate() + maxSupplierDeliveryDays)
+              deliveryDate.setTime(calculatedDate.getTime())
+              
+              if (deliveryType === 'pickup') {
+                deliveryTime = `С ${deliveryDate.getDate()} ${deliveryDate.toLocaleDateString('ru-RU', { month: 'long' })}`
+              } else {
+                deliveryTime = `${minDate.getHours().toString().padStart(2, '0')}:${minDate.getMinutes().toString().padStart(2, '0')}-${maxDate.getHours().toString().padStart(2, '0')}:${maxDate.getMinutes().toString().padStart(2, '0')}`
+              }
+            }
           }
           
           if (pricing) {
@@ -7069,22 +7151,106 @@ export const resolvers = {
             }
           }
           
+          // Определяем название и описание в зависимости от типа доставки
+          let name = 'Курьерская доставка'
+          let description = 'Доставка курьером до двери'
+          
+          if (deliveryType === 'pickup') {
+            name = 'Доставка в пункт выдачи (ПВЗ)'
+            description = 'Получение в пункте выдачи заказов'
+            deliveryCost = 0 // ПВЗ всегда бесплатно
+          }
+          
+          if (maxSupplierDeliveryDays > 0) {
+            if (deliveryType === 'pickup') {
+              description = `Доставка включает ${maxSupplierDeliveryDays} дн. поставки товара + доставку в ПВЗ`
+            } else {
+              description = `Доставка включает ${maxSupplierDeliveryDays} дн. поставки товара + доставку до двери`
+            }
+          }
+          
+          const formattedDeliveryDate = deliveryDate.toLocaleDateString('ru-RU', {
+            weekday: 'short',
+            day: 'numeric',
+            month: 'long'
+          })
+          
           return {
-            id: offer.offer_id || `offer_${Date.now()}`,
-            name: 'Курьерская доставка',
-            deliveryDate,
+            id: offer.offer_id || `offer_${deliveryType}_${index}`,
+            name,
+            deliveryDate: formattedDeliveryDate,
             deliveryTime,
             cost: deliveryCost,
-            description: 'Доставка курьером до двери'
+            description,
+            type: deliveryType,
+            expiresAt: offer.expires_at ? new Date(offer.expires_at).toISOString() : null
           }
         })
         
-        // Если нет офферов от Яндекса, возвращаем стандартные варианты
-        if (formattedOffers.length === 0) {
-          console.log('⚠️ Нет офферов от Яндекс Доставки, возвращаем стандартные')
+        // Проверяем есть ли оффер для ПВЗ среди полученных от Яндекса
+        const hasPickupOffer = formattedOffers.some(offer => offer.type === 'pickup')
+        const hasCourierOffer = formattedOffers.some(offer => offer.type === 'courier')
+        
+        // Добавляем стандартный ПВЗ оффер если его нет
+        if (!hasPickupOffer) {
+          console.log('📦 Добавляем стандартный ПВЗ оффер')
           
           const tomorrow = new Date()
-          tomorrow.setDate(tomorrow.getDate() + 1)
+          tomorrow.setDate(tomorrow.getDate() + 1 + maxSupplierDeliveryDays)
+          
+          const standardPickupOffer = {
+            id: 'standard_pickup',
+            name: 'Доставка в пункт выдачи (ПВЗ)',
+            deliveryDate: tomorrow.toLocaleDateString('ru-RU', {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'long'
+            }),
+            deliveryTime: `С ${tomorrow.getDate()} ${tomorrow.toLocaleDateString('ru-RU', { month: 'long' })}`,
+            cost: 0, // Самовывоз бесплатно
+            description: maxSupplierDeliveryDays > 0 
+              ? `Доставка включает ${maxSupplierDeliveryDays} дн. поставки товара + доставку в ПВЗ`
+              : 'Получение в пункте выдачи заказов',
+            type: 'pickup',
+            expiresAt: null
+          }
+          
+          formattedOffers.push(standardPickupOffer)
+        }
+        
+        // Добавляем стандартный курьерский оффер если его нет
+        if (!hasCourierOffer) {
+          console.log('🚚 Добавляем стандартный курьерский оффер')
+          
+          const tomorrow = new Date()
+          tomorrow.setDate(tomorrow.getDate() + 1 + maxSupplierDeliveryDays)
+          
+          const standardCourierOffer = {
+            id: 'standard_courier',
+            name: 'Курьерская доставка',
+            deliveryDate: tomorrow.toLocaleDateString('ru-RU', {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'long'
+            }),
+            deliveryTime: '10:00-18:00',
+            cost: 300, // Стандартная стоимость
+            description: maxSupplierDeliveryDays > 0 
+              ? `Доставка включает ${maxSupplierDeliveryDays} дн. поставки товара + доставку до двери`
+              : 'Доставка курьером до двери',
+            type: 'courier',
+            expiresAt: null
+          }
+          
+          formattedOffers.push(standardCourierOffer)
+        }
+        
+        // Если совсем нет офферов, возвращаем полный набор стандартных
+        if (formattedOffers.length === 0) {
+          console.log('⚠️ Нет офферов от Яндекс Доставки, возвращаем полный стандартный набор')
+          
+          const tomorrow = new Date()
+          tomorrow.setDate(tomorrow.getDate() + 1 + maxSupplierDeliveryDays)
           
           const standardOffers = [
             {
@@ -7097,21 +7263,51 @@ export const resolvers = {
               }),
               deliveryTime: '10:00-18:00',
               cost: 300, // Стандартная стоимость
-              description: 'Доставка курьером до двери'
+              description: maxSupplierDeliveryDays > 0 
+                ? `Доставка включает ${maxSupplierDeliveryDays} дн. поставки товара + доставку до двери`
+                : 'Доставка курьером до двери',
+              type: 'courier',
+              expiresAt: null
+            },
+            {
+              id: 'standard_pickup',
+              name: 'Доставка в пункт выдачи (ПВЗ)',
+              deliveryDate: tomorrow.toLocaleDateString('ru-RU', {
+                weekday: 'short',
+                day: 'numeric',
+                month: 'long'
+              }),
+              deliveryTime: `С ${tomorrow.getDate()} ${tomorrow.toLocaleDateString('ru-RU', { month: 'long' })}`,
+              cost: 0, // Самовывоз бесплатно
+              description: maxSupplierDeliveryDays > 0 
+                ? `Доставка включает ${maxSupplierDeliveryDays} дн. поставки товара + доставку в ПВЗ`
+                : 'Получение в пункте выдачи заказов',
+              type: 'pickup',
+              expiresAt: null
             }
           ]
           
-          return standardOffers
+          return {
+            success: true,
+            message: 'Получены стандартные варианты доставки',
+            error: null,
+            offers: standardOffers
+          }
         }
         
-        return formattedOffers
+        return {
+          success: true,
+          message: 'Офферы доставки успешно получены',
+          error: null,
+          offers: formattedOffers
+        }
         
       } catch (error) {
         console.error('❌ Ошибка получения офферов доставки:', error)
         
         // В случае ошибки возвращаем стандартные варианты
         const tomorrow = new Date()
-        tomorrow.setDate(tomorrow.getDate() + 1)
+        tomorrow.setDate(tomorrow.getDate() + 1 + maxSupplierDeliveryDays)
         
         const fallbackOffers = [
           {
@@ -7124,11 +7320,46 @@ export const resolvers = {
             }),
             deliveryTime: '10:00-18:00',
             cost: 300,
-            description: 'Доставка курьером до двери'
+            description: maxSupplierDeliveryDays > 0 
+              ? `Доставка включает ${maxSupplierDeliveryDays} дн. поставки товара + доставку до двери`
+              : 'Доставка курьером до двери',
+            type: 'courier',
+            expiresAt: null
+          },
+          {
+            id: 'fallback_pickup',
+            name: 'Доставка в пункт выдачи (ПВЗ)',
+            deliveryDate: tomorrow.toLocaleDateString('ru-RU', {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'long'
+            }),
+            deliveryTime: `С ${tomorrow.getDate()} ${tomorrow.toLocaleDateString('ru-RU', { month: 'long' })}`,
+            cost: 0, // Самовывоз бесплатно
+            description: maxSupplierDeliveryDays > 0 
+              ? `Доставка включает ${maxSupplierDeliveryDays} дн. поставки товара + доставку в ПВЗ`
+              : 'Получение в пункте выдачи заказов',
+            type: 'pickup',
+            expiresAt: null
           }
         ]
         
-        return fallbackOffers
+        // Определяем сообщение в зависимости от типа ошибки
+        let errorMessage = 'Временные проблемы с сервисом доставки'
+        if (error instanceof Error) {
+          if (error.message.includes('Missing some required address details')) {
+            errorMessage = 'Требуется уточнение адреса доставки'
+          } else if (error.message.includes('no_delivery_options')) {
+            errorMessage = 'Доставка в данный адрес временно недоступна'
+          }
+        }
+        
+        return {
+          success: true, // Меняем на true, так как мы предоставляем альтернативные варианты
+          message: `${errorMessage}. Показаны стандартные варианты доставки.`,
+          error: null, // Убираем детали ошибки API для пользователя
+          offers: fallbackOffers
+        }
       }
     }
   }
