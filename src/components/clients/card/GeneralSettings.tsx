@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
-import { UPDATE_CLIENT, UPDATE_CLIENT_BALANCE } from '@/lib/graphql/mutations'
+import { UPDATE_CLIENT, UPDATE_CLIENT_BALANCE, DELETE_CLIENT } from '@/lib/graphql/mutations'
 import { GET_CLIENT_PROFILES, GET_USERS_FOR_MANAGER } from '@/lib/graphql/queries'
 import { Trash2, Save } from 'lucide-react'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
@@ -130,6 +130,17 @@ export const GeneralSettings = ({ client, onUpdate }: GeneralSettingsProps) => {
     }
   })
 
+  const [deleteClient, { loading: deleteLoading }] = useMutation(DELETE_CLIENT, {
+    onCompleted: () => {
+      toast.success('Клиент удален')
+      // Перенаправляем на список клиентов
+      window.location.href = '/dashboard/clients'
+    },
+    onError: (error) => {
+      toast.error(`Ошибка удаления: ${error.message}`)
+    }
+  })
+
   const handleSave = async () => {
     try {
       await updateClient({
@@ -174,6 +185,18 @@ export const GeneralSettings = ({ client, onUpdate }: GeneralSettingsProps) => {
       ...prev,
       [field]: value
     }))
+  }
+
+  const handleDeleteClient = async () => {
+    try {
+      await deleteClient({
+        variables: {
+          id: client.id
+        }
+      })
+    } catch (error) {
+      console.error('Ошибка удаления клиента:', error)
+    }
   }
 
   return (
@@ -511,8 +534,12 @@ export const GeneralSettings = ({ client, onUpdate }: GeneralSettingsProps) => {
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Отмена</AlertDialogCancel>
-                  <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                    Удалить
+                  <AlertDialogAction 
+                    onClick={handleDeleteClient}
+                    disabled={deleteLoading}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    {deleteLoading ? 'Удаление...' : 'Удалить'}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>

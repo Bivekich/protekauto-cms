@@ -2152,13 +2152,25 @@ class LaximoService {
         const unitId = this.extractAttribute(unitAttributes, 'unitid')
         const unitName = this.extractAttribute(unitAttributes, 'name')
         const unitCode = this.extractAttribute(unitAttributes, 'code')
+        let imageUrl = this.extractAttribute(unitAttributes, 'imageurl')
+        let largeImageUrl = this.extractAttribute(unitAttributes, 'largeimageurl')
         
-        console.log('🔧 Найден узел:', { unitId, unitName, unitCode })
+        // Декодируем HTML entities в URL изображений
+        if (imageUrl) {
+          imageUrl = imageUrl.replace(/&amp;/g, '&')
+        }
+        if (largeImageUrl) {
+          largeImageUrl = largeImageUrl.replace(/&amp;/g, '&')
+        }
+        
+        console.log('🔧 Найден узел:', { unitId, unitName, unitCode, imageUrl, largeImageUrl })
 
         const unit: LaximoUnit = {
           unitid: unitId,
           name: unitName,
           code: unitCode,
+          imageurl: imageUrl || undefined,
+          largeimageurl: largeImageUrl || undefined,
           details: []
         }
 
