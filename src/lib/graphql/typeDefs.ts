@@ -935,6 +935,7 @@ export const typeDefs = gql`
     # Поиск товаров и предложений
     searchProductOffers(articleNumber: String!, brand: String!): ProductOffersResult!
     getAnalogOffers(analogs: [AnalogOfferInput!]!): [AnalogProduct!]
+    getBrandsByCode(code: String!): BrandsByCodeResponse!
     
     # PartsAPI категории
     partsAPICategories(carId: Int!, carType: CarType): [PartsAPICategory!]!
@@ -1882,5 +1883,18 @@ export const typeDefs = gql`
     deliveryDate: String
     deliveryTime: String
     cost: Float!
+  }
+
+  # Типы для поиска брендов по коду
+  type BrandSearchResult {
+    brand: String!
+    code: String!
+    name: String!
+  }
+
+  type BrandsByCodeResponse {
+    success: Boolean!
+    brands: [BrandSearchResult!]!
+    error: String
   }
 ` 

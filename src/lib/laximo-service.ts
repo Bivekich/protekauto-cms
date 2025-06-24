@@ -554,6 +554,18 @@ class LaximoService {
   }
 
   /**
+   * Экранирует специальные символы XML в SSD параметре
+   */
+  protected escapeSsdForXML(ssd: string): string {
+    return ssd
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;')
+  }
+
+  /**
    * Создает SOAP 1.1 конверт согласно WSDL схеме
    */
   protected createSOAP11Envelope(command: string, login: string, hmac: string): string {
@@ -1068,7 +1080,8 @@ class LaximoService {
         command += `|VehicleId=${vehicleId}`
       }
       if (ssd && ssd.trim() !== '') {
-        command += `|ssd=${ssd}`
+        const escapedSsd = this.escapeSsdForXML(ssd)
+        command += `|ssd=${escapedSsd}`
       }
       if (categoryId) {
         command += `|CategoryId=${categoryId}`
@@ -1192,7 +1205,8 @@ class LaximoService {
         command += `|VehicleId=${vehicleId}`
       }
       if (ssd && ssd.trim() !== '') {
-        command += `|ssd=${ssd}`
+        const escapedSsd = this.escapeSsdForXML(ssd)
+        command += `|ssd=${escapedSsd}`
       }
       
       const hmac = this.createHMAC(command)
@@ -1299,8 +1313,13 @@ class LaximoService {
     }
 
     try {
-      const command = `ListQuickGroup:Locale=ru_RU|Catalog=${catalogCode}|VehicleId=${vehicleId}|ssd=${ssd}`
+      // Экранируем специальные символы XML в SSD параметре
+      const escapedSsd = this.escapeSsdForXML(ssd)
+      const command = `ListQuickGroup:Locale=ru_RU|Catalog=${catalogCode}|VehicleId=${vehicleId}|ssd=${escapedSsd}`
       const hmac = this.createHMAC(command)
+      
+      console.log('📝 Исходный SSD:', ssd)
+      console.log('📝 Экранированный SSD:', escapedSsd)
       
       console.log('📝 Laximo ListQuickGroup Command:', command)
       console.log('🔗 HMAC:', hmac)
@@ -1369,9 +1388,13 @@ class LaximoService {
     }
 
     try {
-      const command = `ListQuickGroup:Locale=ru_RU|Catalog=${catalogCode}|VehicleId=${vehicleId}|ssd=${ssd}`
+      // Экранируем специальные символы XML в SSD параметре
+      const escapedSsd = this.escapeSsdForXML(ssd)
+      const command = `ListQuickGroup:Locale=ru_RU|Catalog=${catalogCode}|VehicleId=${vehicleId}|ssd=${escapedSsd}`
       const hmac = this.createHMAC(command)
       
+      console.log('📝 Исходный SSD:', ssd)
+      console.log('📝 Экранированный SSD:', escapedSsd)
       console.log('📝 Laximo ListQuickGroup Command:', command)
       console.log('🔗 HMAC:', hmac)
       console.log('👤 Login:', this.login)
@@ -1397,11 +1420,10 @@ class LaximoService {
    * Базовый SOAP запрос без парсинга каталогов
    */
   protected async makeBasicSOAPRequest(url: string, soapEnvelope: string, soapAction: string): Promise<string> {
-    console.log('🌐 Laximo SOAP запрос:')
-    console.log('📍 URL:', url)
+    console.log('🌐 Laximo SOAP запрос к:', url)
     console.log('🎯 SOAPAction:', soapAction)
-    console.log('📤 SOAP Envelope (первые 500 символов):')
-    console.log(soapEnvelope.substring(0, 500) + '...')
+    console.log('📤 SOAP Envelope (первые 800 символов):')
+    console.log(soapEnvelope.substring(0, 800))
     
     const response = await fetch(url, {
       method: 'POST',
@@ -1411,6 +1433,9 @@ class LaximoService {
       },
       body: soapEnvelope
     })
+    
+    console.log('📡 HTTP Response Status:', response.status, response.statusText)
+    console.log('📋 Response Headers:', Object.fromEntries(response.headers.entries()))
     
     if (!response.ok) {
       // Пытаемся получить тело ответа для диагностики
@@ -1426,15 +1451,19 @@ class LaximoService {
 
     const xmlText = await response.text()
     
-    // Логируем полный RAW XML ответ от Laximo для отладки
-    console.log('📥 RAW XML ОТВЕТ ОТ LAXIMO:')
-    console.log('═'.repeat(80))
-    console.log(xmlText)
-    console.log('═'.repeat(80))
+    console.log('📥 RAW XML ответ длиной:', xmlText.length, 'символов')
+    console.log('📄 Первые 1000 символов XML:')
+    console.log(xmlText.substring(0, 1000))
     
     // Проверяем на ошибки в ответе
     if (xmlText.includes('E_ACCESSDENIED')) {
+      console.error('🚨 Access denied error в XML ответе')
       throw new Error('Access denied to Laximo API')
+    }
+    
+    if (xmlText.includes('soap:Fault') || xmlText.includes('faultstring')) {
+      console.error('🚨 SOAP Fault в ответе:', xmlText.substring(0, 1000))
+      throw new Error('SOAP Fault in Laximo response')
     }
     
     return xmlText
@@ -1873,83 +1902,176 @@ class LaximoService {
       return []
     }
 
-    const parsedGroups = this.parseQuickGroupRows(quickGroupsMatch[1])
-    console.log('🏗️ РЕЗУЛЬТАТ ПАРСИНГА XML:')
-    console.log('📊 Количество групп верхнего уровня:', parsedGroups.length)
+    console.log('✅ Найдена секция ListQuickGroups')
+
+    const xmlContent = quickGroupsMatch[1]
     
-    // Логируем первые несколько групп для диагностики
-    parsedGroups.slice(0, 3).forEach((group, index) => {
-      console.log(`📦 Группа ${index + 1}:`, {
-        id: group.quickgroupid,
-        name: group.name,
-        link: group.link,
-        children: group.children?.length || 0
-      })
-      
-      // Логируем первые дочерние элементы
-      if (group.children && group.children.length > 0) {
-        group.children.slice(0, 3).forEach((child, childIndex) => {
-          console.log(`  └─ Дочерняя группа ${childIndex + 1}:`, {
-            id: child.quickgroupid,
-            name: child.name,
-            link: child.link,
-            children: child.children?.length || 0
-          })
-        })
-      }
+    // Ищем корневую группу с quickgroupid="0" (может называться по-разному)
+    const rootGroupPattern = /<row[^>]*quickgroupid="0"[^>]*>/
+    const rootMatch = xmlContent.match(rootGroupPattern)
+    
+    if (!rootMatch) {
+      console.log('❌ Не найдена корневая группа с quickgroupid="0"')
+      console.log('🔍 Контент для поиска (первые 200 символов):')
+      console.log(xmlContent.substring(0, 200))
+      return []
+    }
+
+    console.log('✅ Найдена корневая группа:', rootMatch[0])
+    
+    // Начинаем парсить содержимое после корневой группы
+    const rootIndex = xmlContent.indexOf(rootMatch[0])
+    const afterRootTag = rootIndex + rootMatch[0].length
+    
+    // Парсим полную иерархию начиная с корневой группы
+    const allCategories = this.parseRowHierarchy(xmlContent, afterRootTag)
+    
+    console.log(`📊 Найдено основных категорий: ${allCategories.length}`)
+    allCategories.forEach((category, index) => {
+      const childrenCount = this.countAllChildren(category)
+      console.log(`${index + 1}. ${category.name} (ID: ${category.quickgroupid}, link: ${category.link}, подкатегорий: ${childrenCount})`)
     })
     
-    return parsedGroups
+    // Возвращаем все категории с их полной иерархией
+    return allCategories
   }
 
   /**
-   * Парсит строки групп быстрого поиска (рекурсивно)
+   * Рекурсивно парсит иерархию row элементов
    */
-  private parseQuickGroupRows(xmlData: string): LaximoQuickGroup[] {
-    const groups: LaximoQuickGroup[] = []
+  private parseRowHierarchy(xmlContent: string, startPos: number): LaximoQuickGroup[] {
+    const categories: LaximoQuickGroup[] = []
+    let pos = startPos
     
-    // Находим все теги row с их содержимым
-    const rowPattern = /<row([^>]*?)(?:\s*\/>|>([\s\S]*?)<\/row>)/g
-    let match
-    
-    while ((match = rowPattern.exec(xmlData)) !== null) {
-      const attributes = match[1]
-      const content = match[2] || ''
+    while (pos < xmlContent.length) {
+      // Ищем следующий открывающий тег <row
+      const rowStart = xmlContent.indexOf('<row', pos)
+      if (rowStart === -1) break
       
-      // Извлекаем атрибуты
-      const quickgroupid = this.extractAttribute(attributes, 'quickgroupid')
-      const name = this.extractAttribute(attributes, 'name')
-      const link = this.extractAttribute(attributes, 'link') === 'true'
+      const rowTagEnd = xmlContent.indexOf('>', rowStart)
+      if (rowTagEnd === -1) break
       
-      const group: LaximoQuickGroup = {
-        quickgroupid,
-        name,
-        link
+      const rowTag = xmlContent.substring(rowStart, rowTagEnd + 1)
+      
+      // Парсим текущую группу
+      const group = this.parseRowTagToGroup(rowTag)
+      if (!group) {
+        pos = rowTagEnd + 1
+        continue
       }
       
-      // Если есть содержимое, парсим вложенные группы
-      if (content.trim()) {
-        const childGroups = this.parseQuickGroupRows(content)
-        if (childGroups.length > 0) {
-          group.children = childGroups
+      console.log(`📦 Найден элемент: ${group.name} (ID: ${group.quickgroupid}, link: ${group.link})`)
+      
+      // Если это самозакрывающийся тег
+      if (rowTag.endsWith('/>')) {
+        categories.push(group)
+        pos = rowTagEnd + 1
+        continue
+      }
+      
+      // Ищем соответствующий закрывающий тег </row>
+      const closeTagPos = this.findMatchingCloseTag(xmlContent, rowTagEnd + 1)
+      
+      if (closeTagPos > rowTagEnd + 1) {
+        // Есть содержимое между открывающим и закрывающим тегами
+        const innerContent = xmlContent.substring(rowTagEnd + 1, closeTagPos)
+        if (innerContent.includes('<row')) {
+          console.log(`🔍 Парсим детей для ${group.name}...`)
+          group.children = this.parseRowHierarchy(innerContent, 0)
         }
       }
       
-      console.log('📦 Найдена группа:', { quickgroupid, name, link, children: group.children?.length || 0 })
-      groups.push(group)
+      categories.push(group)
+      
+      // Переходим к позиции после закрывающего тега
+      pos = closeTagPos + 6 // Длина "</row>"
     }
     
-    console.log(`✅ Обработано ${groups.length} групп`)
-    return groups
+    return categories
   }
 
   /**
-   * Извлекает значение атрибута из строки атрибутов
+   * Находит позицию соответствующего закрывающего тега </row>
    */
-  protected extractAttribute(attributesString: string, attributeName: string): string {
-    const regex = new RegExp(`${attributeName}="([^"]*)"`, 'i')
-    const match = attributesString.match(regex)
-    return match ? match[1] : ''
+  private findMatchingCloseTag(xmlContent: string, startPos: number): number {
+    let depth = 1
+    let pos = startPos
+    
+    while (pos < xmlContent.length && depth > 0) {
+      const nextOpen = xmlContent.indexOf('<row', pos)
+      const nextClose = xmlContent.indexOf('</row>', pos)
+      
+      // Если больше нет тегов
+      if (nextClose === -1) break
+      
+      // Если есть открывающий тег раньше закрывающего
+      if (nextOpen !== -1 && nextOpen < nextClose) {
+        // Проверяем, что это не самозакрывающийся тег
+        const tagEnd = xmlContent.indexOf('>', nextOpen)
+        if (tagEnd !== -1) {
+          const tag = xmlContent.substring(nextOpen, tagEnd + 1)
+          if (!tag.endsWith('/>')) {
+            depth++
+          }
+        }
+        pos = nextOpen + 4 // Длина "<row"
+      } else {
+        depth--
+        if (depth === 0) {
+          return nextClose
+        }
+        pos = nextClose + 6 // Длина "</row>"
+      }
+    }
+    
+    return startPos
+  }
+
+  /**
+   * Подсчитывает общее количество дочерних элементов рекурсивно
+   */
+  private countAllChildren(group: LaximoQuickGroup): number {
+    if (!group.children || group.children.length === 0) {
+      return 0
+    }
+    
+    let count = group.children.length
+    group.children.forEach(child => {
+      count += this.countAllChildren(child)
+    })
+    
+    return count
+  }
+
+  /**
+   * Парсит row тег и извлекает атрибуты
+   */
+  private parseRowTagToGroup(rowTag: string): LaximoQuickGroup | null {
+    try {
+      const quickgroupid = this.extractAttribute(rowTag, 'quickgroupid')
+      const name = this.extractAttribute(rowTag, 'name')
+      const linkStr = this.extractAttribute(rowTag, 'link')
+      const code = this.extractAttribute(rowTag, 'code')
+      const imageurl = this.extractAttribute(rowTag, 'imageurl')
+      const largeimageurl = this.extractAttribute(rowTag, 'largeimageurl')
+
+      if (!quickgroupid || !name) {
+        return null
+      }
+
+      return {
+        quickgroupid,
+        name,
+        link: linkStr === 'true',
+        code: code || undefined,
+        imageurl: imageurl || undefined,
+        largeimageurl: largeimageurl || undefined,
+        children: undefined
+      }
+    } catch (error) {
+      console.error('❌ Ошибка парсинга row тега:', error)
+      return null
+    }
   }
 
   /**
@@ -2866,6 +2988,15 @@ class LaximoService {
     
     console.log(`✅ Обработано ${catalogs.length} каталогов`)
     return catalogs
+  }
+
+  /**
+   * Извлекает значение атрибута из строки атрибутов
+   */
+  protected extractAttribute(attributesString: string, attributeName: string): string {
+    const regex = new RegExp(`${attributeName}="([^"]*)"`, 'i')
+    const match = attributesString.match(regex)
+    return match ? match[1] : ''
   }
 }
 

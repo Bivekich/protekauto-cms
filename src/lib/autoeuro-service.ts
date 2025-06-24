@@ -9,6 +9,19 @@ export interface AutoEuroSearchParams {
   with_offers?: boolean;
 }
 
+export interface AutoEuroBrandResult {
+  brand: string;
+  code: string;
+  name: string;
+}
+
+export interface AutoEuroBrandSearchResult {
+  success: boolean;
+  data?: AutoEuroBrandResult[];
+  error?: string;
+  message?: string;
+}
+
 export interface AutoEuroOffer {
   offer_key: string;
   stock: number;
@@ -349,6 +362,103 @@ class AutoEuroService {
     } catch (error) {
       console.error('❌ Ошибка поиска брендов AutoEuro:', error);
       return [];
+    }
+  }
+
+  /**
+   * Получение списка брендов у которых есть искомый артикул
+   */
+  async getBrandsByCode(code: string): Promise<AutoEuroBrandSearchResult> {
+    try {
+      console.log('🔍 AutoEuro: поиск брендов по коду артикула:', code);
+
+      // Используем правильный endpoint из документации: /search_brands/
+      // Пробуем сначала POST запрос
+      const url = `${this.baseUrl}/search_brands/${this.apiKey}`;
+      
+      let response;
+      try {
+        console.log('🔄 AutoEuro: пробуем POST запрос...');
+        response = await axios.post(url, {
+          code: code.trim()
+        }, {
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'ProtekautoAPI/1.0',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
+        });
+      } catch (postError) {
+        console.log('⚠️ AutoEuro: POST запрос не удался, пробуем GET...');
+        // Если POST не работает, пробуем GET запрос
+        const getUrl = `${this.baseUrl}/search_brands/${this.apiKey}?code=${encodeURIComponent(code.trim())}`;
+        response = await axios.get(getUrl, {
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'ProtekautoAPI/1.0',
+            'Accept': 'application/json'
+          }
+        });
+      }
+
+      console.log('✅ AutoEuro brands response status:', response.status);
+      console.log('📦 AutoEuro brands response data type:', typeof response.data);
+      
+      if (response.data) {
+        console.log('📦 AutoEuro brands response structure:', Object.keys(response.data));
+        console.log('📦 AutoEuro brands response (первые 500 символов):', JSON.stringify(response.data, null, 2).substring(0, 500));
+      }
+
+      // Обрабатываем разные форматы ответа API
+      if (response.data && response.data.META && response.data.DATA) {
+        console.log('✅ AutoEuro: найдено брендов:', response.data.DATA.length);
+        return {
+          success: true,
+          data: response.data.DATA.map((item: any) => ({
+            brand: item.brand || item.name || item,
+            code: item.code || code,
+            name: item.name || item.description || item.brand || item
+          }))
+        };
+      }
+      
+      // Альтернативный формат - массив напрямую
+      if (response.data && Array.isArray(response.data)) {
+        console.log('✅ AutoEuro: найдено брендов (массив):', response.data.length);
+        return {
+          success: true,
+          data: response.data.map((item: any) => ({
+            brand: item.brand || item.name || item,
+            code: item.code || code,
+            name: item.name || item.description || item.brand || item
+          }))
+        };
+      }
+      
+      // Проверяем на ошибки
+      const errorMessage = response.data?.ERROR?.error || response.data?.META?.error || response.data?.error;
+      if (errorMessage) {
+        console.log('⚠️ AutoEuro brands ошибка:', errorMessage);
+        return {
+          success: false,
+          error: errorMessage
+        };
+      }
+      
+      // Если нет данных
+      console.log('⚠️ AutoEuro: бренды не найдены для артикула:', code);
+      return {
+        success: true,
+        data: []
+      };
+
+    } catch (error) {
+      console.error('❌ Ошибка получения брендов по коду AutoEuro:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Неизвестная ошибка'
+      };
     }
   }
 

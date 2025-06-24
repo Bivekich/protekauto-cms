@@ -1683,48 +1683,50 @@ export const resolvers = {
       try {
         console.log('🔧 GraphQL Resolver - получение групп быстрого поиска:', { catalogCode, vehicleId, ssd: ssd?.substring(0, 30) })
         
-        const groups = await laximoService.getListQuickGroup(catalogCode, vehicleId, ssd)
+        let groups: any[] = []
         
-        console.log('🎯 GraphQL Resolver - результат от LaximoService:')
+        // Сначала пробуем стандартный метод getListQuickGroup
+        try {
+          groups = await laximoService.getListQuickGroup(catalogCode, vehicleId, ssd)
+          console.log('✅ Получено групп через getListQuickGroup:', groups.length)
+        } catch (quickGroupError) {
+          console.warn('⚠️ Ошибка getListQuickGroup:', quickGroupError)
+          
+          // Альтернативный метод - используем ListCategories
+          try {
+            console.log('🔄 Пробуем альтернативный метод - ListCategories')
+            groups = await laximoService.getListCategories(catalogCode, vehicleId, ssd)
+            console.log('✅ Получено категорий через getListCategories:', groups.length)
+          } catch (categoriesError) {
+            console.warn('⚠️ Ошибка getListCategories:', categoriesError)
+          }
+        }
+        
+        console.log('🎯 GraphQL Resolver - итоговый результат:')
         console.log('📊 Общее количество групп:', groups.length)
         
-        // Логируем полную структуру данных от Laximo для отладки
-        console.log('🔍 ПОЛНЫЙ ОТВЕТ LAXIMO ListQuickGroup (JSON):')
-        console.log(JSON.stringify(groups, null, 2))
+        if (groups.length > 0) {
+          console.log('📋 Первые 5 групп:')
+          groups.slice(0, 5).forEach((group, index) => {
+            console.log(`  ${index + 1}. ${group.name} (ID: ${group.quickgroupid}, link: ${group.link})`)
+          })
+        }
         
-        // Дополнительная аналитика
-        const groupsWithLink = groups.filter(g => g.link).length
-        const groupsWithChildren = groups.filter(g => g.children && g.children.length > 0).length
-        const totalChildrenCount = groups.reduce((total, group) => {
+        // Подсчитываем детали в подгруппах
+        groups.forEach((group, index) => {
           const countChildren = (g: any): number => {
             let count = 1
-            if (g.children) {
-              count += g.children.reduce((childTotal: number, child: any) => childTotal + countChildren(child), 0)
+            if (g.children && g.children.length > 0) {
+              g.children.forEach((child: any) => {
+                count += countChildren(child)
+              })
             }
             return count
           }
-          return total + countChildren(group)
-        }, 0)
-        
-        console.log('📊 Аналитика групп быстрого поиска:')
-        console.log(`• Групп верхнего уровня: ${groups.length}`)
-        console.log(`• Групп с поддержкой деталей (link=true): ${groupsWithLink}`)
-        console.log(`• Групп с дочерними элементами: ${groupsWithChildren}`)
-        console.log(`• Общее количество всех групп (включая дочерние): ${totalChildrenCount}`)
-        
-        // Логируем структуру каждой группы верхнего уровня
-        groups.forEach((group, index) => {
-          console.log(`📦 Группа ${index + 1}:`, {
-            quickgroupid: group.quickgroupid,
-            name: group.name,
-            link: group.link,
-            code: group.code || 'отсутствует',
-            imageurl: group.imageurl ? 'есть' : 'отсутствует',
-            largeimageurl: group.largeimageurl ? 'есть' : 'отсутствует',
-            children: group.children?.length || 0
-          })
           
-          // Если есть дочерние группы, логируем их тоже
+          const totalChildren = countChildren(group) - 1 // Исключаем саму группу
+          console.log(`📂 Группа ${index + 1}: ${group.name} - всего подэлементов: ${totalChildren}`)
+          
           if (group.children && group.children.length > 0) {
             group.children.forEach((child, childIndex) => {
               console.log(`  └─ Дочерняя группа ${childIndex + 1}:`, {
@@ -2191,45 +2193,81 @@ export const resolvers = {
           }
           
           let name = ''
-          if(analogInternalProducts.length > 0) {
-            name = analogInternalProducts[0].name;
-          } else if(analogExternalOffers.length > 0) {
-            name = analogExternalOffers[0].name;
+          if (analogInternalProducts.length > 0) {
+            name = analogInternalProducts[0].name
+          } else if (analogExternalOffers.length > 0) {
+            name = analogExternalOffers[0].name
           }
 
           return {
-            brand,
             articleNumber,
-            name: name,
-            type: 'ANALOG',
-            internalOffers: analogInternalProducts.map((product) => ({
-              id: product.id,
-              productId: product.id,
-              price: product.retailPrice || 0,
-              quantity: product.stock || 0,
-              warehouse: 'Основной склад',
-              deliveryDays: 1,
-              available: (product.stock || 0) > 0,
-              rating: 4.8,
-              supplier: 'Protek',
-            })),
+            brand,
+            name,
+            totalOffers: analogInternalProducts.length + analogExternalOffers.length,
             externalOffers: analogExternalOffers,
           }
         })
 
-        const settledAnalogs = await Promise.all(analogPromises)
-        
-        // Больше не фильтруем аналоги без предложений
-        // const analogsWithOffers = settledAnalogs.filter(
-        //   (a) => a.internalOffers.length > 0 || a.externalOffers.length > 0
-        // )
-        
-        console.log(`✅ Найдено предложений для ${settledAnalogs.filter(a => a.internalOffers.length > 0 || a.externalOffers.length > 0).length} из ${analogs.length} аналогов.`)
+        const analogResults = await Promise.all(analogPromises)
+        console.log('✅ GraphQL Resolver - поиск аналогов завершен:', {
+          processedAnalogs: analogResults.length,
+          totalOffers: analogResults.reduce((sum, result) => sum + result.totalOffers, 0),
+        })
 
-        return settledAnalogs
+        return analogResults
       } catch (error) {
-        console.error('❌ Ошибка в GraphQL resolver getAnalogOffers:', error)
-        throw new Error('Не удалось найти предложения для аналогов')
+        console.error('❌ GraphQL Resolver - ошибка поиска аналогов:', error)
+        return []
+      }
+    },
+
+    getBrandsByCode: async (_: unknown, { code }: { code: string }, context: Context) => {
+      try {
+        console.log('🔍 GraphQL Resolver - поиск брендов по коду:', { code })
+
+        if (!code || code.trim() === '') {
+          console.log('❌ GraphQL Resolver - некорректный код:', { code })
+          return {
+            success: false,
+            error: 'Код артикула не может быть пустым',
+            brands: []
+          }
+        }
+
+        const cleanCode = code.trim()
+        console.log('🔍 GraphQL Resolver - начинаем поиск брендов в AutoEuro:', { code: cleanCode })
+        
+        const autoEuroResult = await autoEuroService.getBrandsByCode(cleanCode)
+        
+        console.log('📊 GraphQL Resolver - результат поиска брендов AutoEuro:', {
+          success: autoEuroResult.success,
+          brandsCount: autoEuroResult.data?.length || 0,
+          error: autoEuroResult.error
+        })
+
+        if (autoEuroResult.success && autoEuroResult.data) {
+          console.log('✅ GraphQL Resolver - найдены бренды:', autoEuroResult.data.length)
+          
+          return {
+            success: true,
+            brands: autoEuroResult.data,
+            error: null
+          }
+        } else {
+          console.log('❌ GraphQL Resolver - AutoEuro не вернул бренды:', autoEuroResult)
+          return {
+            success: false,
+            error: autoEuroResult.error || 'Бренды не найдены',
+            brands: []
+          }
+        }
+      } catch (error) {
+        console.error('❌ GraphQL Resolver - ошибка поиска брендов:', error)
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Неизвестная ошибка',
+          brands: []
+        }
       }
     },
 
@@ -5162,7 +5200,14 @@ export const resolvers = {
             name: input.name,
             address: input.address,
             deliveryType: input.deliveryType,
-            comment: input.comment
+            comment: input.comment,
+            // Дополнительные поля для курьерской доставки
+            entrance: input.entrance,
+            floor: input.floor,
+            apartment: input.apartment,
+            intercom: input.intercom,
+            deliveryTime: input.deliveryTime,
+            contactPhone: input.contactPhone
           }
         })
 
